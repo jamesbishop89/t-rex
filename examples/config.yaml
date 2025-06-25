@@ -1,0 +1,109 @@
+# T-Rex Trading System Configuration Example
+# This file demonstrates all available configuration options for trading data reconciliation
+# ========================================================================================
+
+reconciliation:
+  # KEYS SECTION
+  # ------------
+  # Define the key columns used to match trades between source and target systems
+  # Can be a single key or multiple keys for composite matching
+  keys: [trade_id, account_id]
+  
+  # FIELDS SECTION
+  # --------------
+  # Configure each field with optional mappings, transformations, and tolerances
+  fields:
+    
+    # EXAMPLE 1: Trade price with PERCENTAGE tolerance (market volatility)
+    - name: execution_price
+      tolerance: "0.1%"  # Allow 0.1% difference in execution price
+      
+    # EXAMPLE 2: Share quantity with ABSOLUTE tolerance
+    - name: quantity
+      tolerance: 1  # Allow difference of 1 share
+      
+    # EXAMPLE 3: Commission rate with SMALL percentage tolerance
+    - name: commission_rate
+      tolerance: "0.01%"  # Allow 0.01% difference in commission rate
+      
+    # EXAMPLE 4: Trade status field with VALUE MAPPING
+    - name: trade_status
+      mapping:
+        "New": "N"
+        "Partially Filled": "PF"
+        "Filled": "F"
+        "Cancelled": "C"
+        "Rejected": "R"
+        "Pending": "P"
+        "NULL": "Unknown"
+        "": "Unknown"
+        
+    # EXAMPLE 5: Trade date field with TRANSFORMATION
+    - name: trade_date
+      transformation: "lambda x: x.strip().replace('/', '-')"
+      
+    # EXAMPLE 6: Net amount with TRANSFORMATION + TOLERANCE
+    - name: net_amount
+      transformation: "lambda x: round(float(x), 2)"
+      tolerance: 0.01  # Allow 1 cent difference
+      
+    # EXAMPLE 7: Asset class with MAPPING + TRANSFORMATION
+    - name: asset_class
+      mapping:
+        "Equity": "EQ"
+        "Fixed Income": "FI"
+        "Derivatives": "DV"
+        "Foreign Exchange": "FX"
+        "Commodities": "COM"
+        "Alternative": "ALT"
+      transformation: "lambda x: x.upper().strip()"
+      
+    # EXAMPLE 8: Market value with NULL handling
+    - name: market_value
+      mapping:
+        "N/A": 0
+        "NULL": 0
+        "": 0
+        "-": 0
+      transformation: "lambda x: float(x) if x else 0"
+      tolerance: 0.01
+      
+    # EXAMPLE 9: Settlement flag conversion
+    - name: is_settled
+      mapping:
+        "Yes": True
+        "No": False
+        "Y": True
+        "N": False
+        "1": True
+        "0": False
+        "Settled": True
+        "Pending": False
+      
+    # EXAMPLE 10: Currency amount with complex transformation
+    - name: gross_amount
+      transformation: "lambda x: float(x.replace('$', '').replace(',', '').replace('USD', '')) if isinstance(x, str) else float(x)"
+      tolerance: "0.01%"
+      
+    # EXAMPLE 11: Account number standardization
+    - name: account_number
+      transformation: "lambda x: ''.join(filter(str.isalnum, str(x))).upper()"
+      
+    # EXAMPLE 12: Field to IGNORE in comparison but include in output
+    - name: trader_notes
+      ignore: true
+      
+    # EXAMPLE 13: Timestamp field to ignore
+    - name: system_timestamp
+      ignore: true
+      
+    # EXAMPLE 14: PnL percentage field
+    - name: pnl_percentage
+      transformation: "lambda x: float(x.replace('%', '')) / 100 if '%' in str(x) else float(x)"
+      tolerance: "1%"
+
+# OUTPUT CONFIGURATION
+# ===================
+output:
+  filename: "trading_reconciliation_results"  # Base filename (timestamp added automatically)
+  # Results in files like: trading_reconciliation_results_20250624_143022.xlsx
