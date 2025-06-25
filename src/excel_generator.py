@@ -474,8 +474,10 @@ class ExcelGenerator(LoggerMixin):
                     source_value = different_df.iloc[diff_row_idx][f'source_{field_name}'] if f'source_{field_name}' in different_df.columns else None
                     target_value = different_df.iloc[diff_row_idx][f'target_{field_name}'] if f'target_{field_name}' in different_df.columns else None
                     
-                    # Highlight if values are different
-                    if source_value != target_value and pd.notna(source_value) and pd.notna(target_value):
+                    # Check if values are different - handle null/blank comparisons properly
+                    values_are_different = self._values_are_different(source_value, target_value)
+                    
+                    if values_are_different:
                         # Highlight source cell
                         source_cell = ws.cell(row=excel_row, column=source_col_idx)
                         source_cell.fill = self.colors['difference_fill']
@@ -488,6 +490,38 @@ class ExcelGenerator(LoggerMixin):
         
         except Exception as e:
             self.logger.warning(f"Could not highlight differences: {e}")
+    
+    def _values_are_different(self, source_value, target_value) -> bool:
+        """
+        Check if two values are different, handling null, blank, and empty string comparisons.
+        
+        Args:
+            source_value: Value from source dataset
+            target_value: Value from target dataset
+            
+        Returns:
+            bool: True if values are different, False if they are considered the same
+        """
+        import pandas as pd
+        
+        # Handle pandas NaN values
+        source_is_na = pd.isna(source_value)
+        target_is_na = pd.isna(target_value)
+        
+        # Both are NaN/None - considered same
+        if source_is_na and target_is_na:
+            return False
+        
+        # One is NaN/None, other is not - different
+        if source_is_na != target_is_na:
+            return True
+        
+        # Convert to string for comparison (handles various data types)
+        source_str = str(source_value).strip() if source_value is not None else ""
+        target_str = str(target_value).strip() if target_value is not None else ""
+        
+        # Compare string representations
+        return source_str != target_str
     
     def _get_excel_column_name(self, col_num: int) -> str:
         """
