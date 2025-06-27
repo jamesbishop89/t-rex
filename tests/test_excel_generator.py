@@ -110,6 +110,12 @@ class TestExcelGenerator:
                         'differences_count': 10
                     }
                 }
+            },
+            'config': {
+                'reconciliation': {
+                    'keys': ['customer_id'],
+                    'fields': [{'name': 'amount'}]
+                }
             }
         }
         
@@ -118,7 +124,8 @@ class TestExcelGenerator:
             'target_file': 'test_target.csv',
             'config_file': 'test_config.yaml',
             'execution_time': 2.5,
-            'recon_date': '2025-06-24 10:30:00'
+            'recon_date': '2025-06-24 10:30:00',
+            'source_columns': ['customer_id', 'amount', 'date']
         }
         
         # Should not raise any exception
@@ -167,6 +174,12 @@ class TestExcelGenerator:
                         'differences_count': 10
                     }
                 }
+            },
+            'config': {
+                'reconciliation': {
+                    'keys': ['customer_id'],
+                    'fields': [{'name': 'very_long_field_name_for_auto_sizing_test'}]
+                }
             }
         }
         
@@ -175,7 +188,8 @@ class TestExcelGenerator:
             'target_file': 'test_target_with_very_long_file_name.csv',
             'config_file': 'test_config.yaml',
             'execution_time': 2.5,
-            'recon_date': '2025-06-24 10:30:00'
+            'recon_date': '2025-06-24 10:30:00',
+            'source_columns': ['customer_id', 'very_long_field_name_for_auto_sizing_test']
         }
         
         # Should not raise any exception

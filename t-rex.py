@@ -213,7 +213,8 @@ def run_reconciliation(args: argparse.Namespace) -> Dict[str, Any]:
             'config_file': str(Path(args.config).absolute()),
             'output_file': str(Path(output_file).absolute()),
             'execution_time': execution_time,
-            'recon_date': time.strftime('%Y-%m-%d %H:%M:%S')
+            'recon_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'source_columns': list(source_df.columns)
         }
         
         excel_generator.generate_excel(results, output_file, metadata)

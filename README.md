@@ -8,6 +8,8 @@ T-Rex is a production-ready Python tool for comparing source and target datasets
 - **Advanced Conditional Mapping**: Apply different mappings based on complex logical conditions (equals, contains, regex, numeric comparisons, etc.)
 - **Dataset-Specific Processing**: Configure mappings and transformations to apply only to source, target, or both datasets
 - **Comprehensive Output**: Five Excel sheets with detailed analysis (Summary, Matched, Different, Missing records)
+- **Transformation Tracking**: Excel comments on transformed cells showing before/after values and transformation rules
+- **Source File Column Ordering**: Summary sheet displays reconciliation keys and fields in source file column order
 - **Auto-Sized Excel Columns**: All sheets automatically size columns to fit content for optimal readability
 - **Performance Optimized**: Designed for large datasets (>1M rows)
 - **Production Ready**: Full error handling, logging, and unit test coverage

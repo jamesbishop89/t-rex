@@ -129,6 +129,8 @@ reconciliation:
 - [x] **Dataset-Specific Processing** - Apply mappings/transformations to source, target, or both
 - [x] **Business Rules Support** - Complex conditional logic for data harmonization
 - [x] **Comprehensive Validation** - Schema validation for all condition types and parameters
+- [x] **Transformation Comments** - Excel comments showing before/after values for all transformations
+- [x] **Source File Column Ordering** - Summary sheet displays keys and fields in source file order
 
 ## 📊 Demonstrated Results
 

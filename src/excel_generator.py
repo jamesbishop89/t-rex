@@ -23,6 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Fill, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.comments import Comment
 
 from src.logger_setup import LoggerMixin
 
@@ -171,9 +172,43 @@ class ExcelGenerator(LoggerMixin):
             ws[f'A{row}'] = label
             ws[f'B{row}'] = value
             ws[f'A{row}'].font = self.fonts['summary_header']
+        
+        # Configuration section
+        config_start_row = stats_start_row + len(stats_data) + 4
+        ws[f'A{config_start_row}'] = 'Reconciliation Configuration'
+        ws[f'A{config_start_row}'].font = self.fonts['title']
+        
+        # Get configuration details
+        config = results['config']
+        recon_config = config['reconciliation']
+        source_columns = metadata.get('source_columns', [])
+        
+        # Order keys and fields according to source file column order
+        ordered_keys = []
+        ordered_fields = []
+        
+        for col in source_columns:
+            if col in recon_config['keys']:
+                ordered_keys.append(col)
+            # Check if column is in configured fields
+            for field in recon_config['fields']:
+                if field['name'] == col and col not in ordered_fields:
+                    ordered_fields.append(col)
+        
+        # Display reconciliation keys
+        keys_row = config_start_row + 2
+        ws[f'A{keys_row}'] = 'Reconciliation Keys'
+        ws[f'B{keys_row}'] = ', '.join(ordered_keys) if ordered_keys else 'N/A'
+        ws[f'A{keys_row}'].font = self.fonts['summary_header']
+        
+        # Display configured fields
+        fields_row = keys_row + 1
+        ws[f'A{fields_row}'] = 'Configured Fields'
+        ws[f'B{fields_row}'] = ', '.join(ordered_fields) if ordered_fields else 'N/A'
+        ws[f'A{fields_row}'].font = self.fonts['summary_header']
           # Field statistics section if available
         if 'field_statistics' in stats and stats['field_statistics']:
-            field_stats_start = stats_start_row + len(stats_data) + 4
+            field_stats_start = config_start_row + 5  # Adjusted for new configuration section
             ws[f'A{field_stats_start}'] = 'Field Statistics'
             ws[f'A{field_stats_start}'].font = self.fonts['title']
             
@@ -185,14 +220,21 @@ class ExcelGenerator(LoggerMixin):
                 ws[f'{col}{field_stats_start + 2}'].font = self.fonts['summary_header']
                 ws[f'{col}{field_stats_start + 2}'].fill = self.colors['summary_header']
             
-            # Sort field statistics by differences count (largest to smallest)
-            sorted_field_stats = sorted(
-                stats['field_statistics'].items(),
-                key=lambda x: x[1]['differences_count'],
-                reverse=True
-            )
+            # Order field statistics by source file column order instead of by differences
+            field_stats_dict = stats['field_statistics']
+            ordered_field_stats = []
+            
+            # Add fields in source file order if they have statistics
+            for col in source_columns:
+                if col in field_stats_dict:
+                    ordered_field_stats.append((col, field_stats_dict[col]))
+            
+            # Add any remaining fields that weren't in source columns (shouldn't happen normally)
+            for field_name, field_stat in field_stats_dict.items():
+                if field_name not in source_columns:
+                    ordered_field_stats.append((field_name, field_stat))
               # Field statistics data
-            for i, (field_name, field_stats) in enumerate(sorted_field_stats):
+            for i, (field_name, field_stats) in enumerate(ordered_field_stats):
                 row = field_stats_start + 3 + i
                 ws[f'A{row}'] = field_name
                 ws[f'B{row}'] = field_stats['matches_count']
@@ -239,6 +281,9 @@ class ExcelGenerator(LoggerMixin):
         
         # Apply formatting
         self._apply_sheet_formatting(ws, display_df)
+        
+        # Add transformation comments
+        self._add_transformation_comments(ws, display_df, results)
     
     def _create_different_sheet(self, wb: Workbook, results: Dict[str, Any]) -> None:
         """
@@ -266,6 +311,9 @@ class ExcelGenerator(LoggerMixin):
         # Apply formatting and highlight differences
         self._apply_sheet_formatting(ws, display_df)
         self._highlight_differences(ws, different_df, results)
+        
+        # Add transformation comments
+        self._add_transformation_comments(ws, display_df, results)
     
     def _create_missing_in_target_sheet(self, wb: Workbook, results: Dict[str, Any]) -> None:
         """
@@ -608,3 +656,84 @@ class ExcelGenerator(LoggerMixin):
             # Set column width within the specified limits
             final_width = max(min_width, min(max_width_needed, max_width))
             ws.column_dimensions[column_letter].width = final_width
+    
+    def _add_transformation_comments(self, ws, display_df: pd.DataFrame, results: Dict[str, Any]) -> None:
+        """
+        Add Excel comments to cells showing transformation history (before/after values).
+        
+        Args:
+            ws: Excel worksheet
+            display_df: DataFrame being displayed in the sheet
+            results: Reconciliation results containing transformation information
+        """
+        try:
+            transformations = results.get('transformations', {})
+            if not transformations:
+                return
+            
+            # Get column mapping for display
+            column_positions = {col: idx + 1 for idx, col in enumerate(display_df.columns)}
+            
+            # Process transformations for both source and target
+            for dataset_type in ['source', 'target']:
+                if dataset_type not in transformations:
+                    continue
+                    
+                for field_name, field_transformations in transformations[dataset_type].items():
+                    # Find source and target column names in display
+                    source_col_name = f'source_{field_name}'
+                    target_col_name = f'target_{field_name}'
+                    
+                    # Add comments to appropriate columns
+                    for col_name in [source_col_name, target_col_name]:
+                        if col_name in column_positions:
+                            col_idx = column_positions[col_name]
+                            
+                            # Group transformations by row
+                            row_transformations = {}
+                            for transformation in field_transformations:
+                                row_idx = transformation['row_index']
+                                if row_idx not in row_transformations:
+                                    row_transformations[row_idx] = []
+                                row_transformations[row_idx].append(transformation)
+                            
+                            # Add comments to cells
+                            for row_idx, transforms in row_transformations.items():
+                                excel_row = row_idx + 2  # +1 for header, +1 for 1-based indexing
+                                
+                                # Build comment text
+                                comment_lines = ["🔄 Data Transformation Applied:"]
+                                for transform in transforms:
+                                    if transform['transformation_type'] == 'mapping':
+                                        comment_lines.append(f"• Mapping: {transform['mapping_rule']}")
+                                    elif transform['transformation_type'] == 'transformation':
+                                        comment_lines.append(f"• Formula: {transform['transformation_rule']}")
+                                        comment_lines.append(f"• Before: {transform['original_value']}")
+                                        comment_lines.append(f"• After: {transform['new_value']}")
+                                    elif transform['transformation_type'] == 'conditional':
+                                        comment_lines.append(f"• Conditional: {transform.get('condition_desc', 'N/A')}")
+                                        comment_lines.append(f"• Before: {transform['original_value']}")
+                                        comment_lines.append(f"• After: {transform['new_value']}")
+                                
+                                comment_text = "\n".join(comment_lines)
+                                
+                                # Create and add comment
+                                cell = ws.cell(row=excel_row, column=col_idx)
+                                comment = Comment(comment_text, author="T-Rex Reconciliation")
+                                comment.width = 300
+                                comment.height = 150
+                                cell.comment = comment
+                                
+                                # Add a small indicator to show the cell has a transformation
+                                if cell.value is not None:
+                                    current_font = cell.font or self.fonts['normal']
+                                    cell.font = Font(
+                                        name=current_font.name,
+                                        size=current_font.size,
+                                        bold=current_font.bold,
+                                        italic=True,  # Make italic to indicate transformation
+                                        color=current_font.color
+                                    )
+                                
+        except Exception as e:
+            self.logger.warning(f"Failed to add transformation comments: {e}")

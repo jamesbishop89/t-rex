@@ -41,6 +41,12 @@ class ReconciliationEngine(LoggerMixin):
         self.comparison_fields = [field for field in self.fields if not field.get('ignore', False)]
         self.ignored_fields = [field for field in self.fields if field.get('ignore', False)]
         
+        # Initialize transformation tracking
+        self.transformations_applied = {
+            'source': {},  # field_name -> list of transformations
+            'target': {}   # field_name -> list of transformations
+        }
+        
         self.logger.info(f"Reconciliation engine initialized with {len(self.keys)} keys and {len(self.fields)} fields")
         self.logger.info(f"Fields for comparison: {len(self.comparison_fields)}, ignored fields: {len(self.ignored_fields)}")
     
@@ -88,7 +94,8 @@ class ReconciliationEngine(LoggerMixin):
             'records': categorized_records,
             'statistics': statistics,
             'field_comparison': comparison_results,
-            'config': self.config
+            'config': self.config,
+            'transformations': self.transformations_applied
         }
     
     def _validate_input_data(self, source_df: pd.DataFrame, target_df: pd.DataFrame) -> None:
@@ -190,12 +197,41 @@ class ReconciliationEngine(LoggerMixin):
             pd.DataFrame: Dataset with mapping applied
         """
         try:
-            original_values = df[field_name].nunique()
+            if field_name not in df.columns:
+                self.logger.warning(f"Field {field_name} not found in {dataset_type} data")
+                return df
+            
+            # Track original values before mapping
+            original_series = df[field_name].copy()
+            
+            # Apply mapping
             df[field_name] = df[field_name].map(mapping).fillna(df[field_name])
+            
+            # Track transformations for Excel comments
+            changes_made = []
+            for idx, (original, new) in enumerate(zip(original_series, df[field_name])):
+                if pd.notna(original) and pd.notna(new) and str(original) != str(new):
+                    changes_made.append({
+                        'row_index': idx,
+                        'original_value': original,
+                        'new_value': new,
+                        'transformation_type': 'mapping',
+                        'mapping_rule': f"{original} -> {new}"
+                    })
+            
+            if changes_made:
+                if dataset_type not in self.transformations_applied:
+                    self.transformations_applied[dataset_type] = {}
+                if field_name not in self.transformations_applied[dataset_type]:
+                    self.transformations_applied[dataset_type][field_name] = []
+                self.transformations_applied[dataset_type][field_name].extend(changes_made)
+            
+            mapped_count = len(changes_made)
+            original_values = original_series.nunique()
             mapped_values = df[field_name].nunique()
             
             self.logger.debug(f"Applied mapping to {field_name} in {dataset_type}: "
-                            f"{original_values} -> {mapped_values} unique values")
+                            f"{mapped_count} values changed, {original_values} -> {mapped_values} unique values")
             
         except Exception as e:
             self.logger.error(f"Failed to apply mapping to {field_name} in {dataset_type}: {e}")
@@ -218,6 +254,13 @@ class ReconciliationEngine(LoggerMixin):
             pd.DataFrame: Dataset with transformation applied
         """
         try:
+            if field_name not in df.columns:
+                self.logger.warning(f"Field {field_name} not found in {dataset_type} data")
+                return df
+            
+            # Track original values before transformation
+            original_series = df[field_name].copy()
+            
             # Compile lambda function
             transform_func = eval(transformation)
             
@@ -225,7 +268,27 @@ class ReconciliationEngine(LoggerMixin):
             mask = df[field_name].notna()
             df.loc[mask, field_name] = df.loc[mask, field_name].apply(transform_func)
             
-            self.logger.debug(f"Applied transformation to {field_name} in {dataset_type}: {transformation}")
+            # Track transformations for Excel comments
+            changes_made = []
+            for idx, (original, new) in enumerate(zip(original_series, df[field_name])):
+                if pd.notna(original) and pd.notna(new) and str(original) != str(new):
+                    changes_made.append({
+                        'row_index': idx,
+                        'original_value': original,
+                        'new_value': new,
+                        'transformation_type': 'transformation',
+                        'transformation_rule': transformation
+                    })
+            
+            if changes_made:
+                if dataset_type not in self.transformations_applied:
+                    self.transformations_applied[dataset_type] = {}
+                if field_name not in self.transformations_applied[dataset_type]:
+                    self.transformations_applied[dataset_type][field_name] = []
+                self.transformations_applied[dataset_type][field_name].extend(changes_made)
+            
+            self.logger.debug(f"Applied transformation to {field_name} in {dataset_type}: "
+                            f"{len(changes_made)} values changed using {transformation}")
             
         except Exception as e:
             self.logger.error(f"Failed to apply transformation to {field_name} in {dataset_type}: {e}")
@@ -530,10 +593,18 @@ class ReconciliationEngine(LoggerMixin):
                 self.logger.warning(f"Condition field {condition_field} not found in {dataset_type} data")
                 return df
             
+            if field_name not in df.columns:
+                self.logger.warning(f"Field {field_name} not found in {dataset_type} data")
+                return df
+            
             original_values = df[field_name].nunique()
             
-            # Create a copy of the field to modify
+            # Create a copy of the field to modify and track original values
+            original_series = df[field_name].copy()
             modified_series = df[field_name].copy()
+            
+            # Track transformations for Excel comments
+            changes_made = []
             
             # Get condition field values and convert to string for most operations
             condition_values = df[condition_field]
@@ -673,10 +744,30 @@ class ReconciliationEngine(LoggerMixin):
             
             # Update the dataframe
             df[field_name] = modified_series
+            
+            # Track transformations for Excel comments
+            for idx, (original, new) in enumerate(zip(original_series, modified_series)):
+                if pd.notna(original) and pd.notna(new) and str(original) != str(new):
+                    changes_made.append({
+                        'row_index': idx,
+                        'original_value': original,
+                        'new_value': new,
+                        'transformation_type': 'conditional',
+                        'condition_desc': f"{condition_field} {condition_type} {condition_value or condition_list}"
+                    })
+            
+            if changes_made:
+                if dataset_type not in self.transformations_applied:
+                    self.transformations_applied[dataset_type] = {}
+                if field_name not in self.transformations_applied[dataset_type]:
+                    self.transformations_applied[dataset_type][field_name] = []
+                self.transformations_applied[dataset_type][field_name].extend(changes_made)
+            
             mapped_values = df[field_name].nunique()
             
             self.logger.debug(f"Applied conditional mapping to {field_name} in {dataset_type} "
-                            f"based on {condition_field}: {original_values} -> {mapped_values} unique values")
+                            f"based on {condition_field}: {len(changes_made)} values changed, "
+                            f"{original_values} -> {mapped_values} unique values")
             
         except Exception as e:
             self.logger.error(f"Failed to apply conditional mapping to {field_name} in {dataset_type}: {e}")
