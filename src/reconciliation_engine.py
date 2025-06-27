@@ -501,7 +501,7 @@ class ReconciliationEngine(LoggerMixin):
         Args:
             df: Dataset to modify
             field_name: Name of field to map
-            conditional_mapping: Dict with 'condition_field' and 'mappings'
+            conditional_mapping: Dict with 'condition_field', 'mappings', and optional 'condition_type'/'condition_value'
             dataset_type: 'source' or 'target' for logging
             
         Returns:
@@ -510,6 +510,8 @@ class ReconciliationEngine(LoggerMixin):
         try:
             condition_field = conditional_mapping['condition_field']
             mappings = conditional_mapping['mappings']
+            condition_type = conditional_mapping.get('condition_type', 'equals')
+            condition_value = conditional_mapping.get('condition_value', None)
             
             if condition_field not in df.columns:
                 self.logger.warning(f"Condition field {condition_field} not found in {dataset_type} data")
@@ -520,22 +522,39 @@ class ReconciliationEngine(LoggerMixin):
             # Create a copy of the field to modify
             modified_series = df[field_name].copy()
             
-            # Apply mappings based on condition field values
-            for condition_value, field_mapping in mappings.items():
-                # Find rows where condition field matches the condition value
-                condition_mask = df[condition_field] == condition_value
+            # Handle different condition types
+            if condition_type == 'not_starts_with' and condition_value:
+                # Special case: apply mapping when condition field does NOT start with condition_value
+                condition_mask = ~df[condition_field].astype(str).str.startswith(condition_value, na=False)
                 
-                if condition_mask.any():
-                    # Apply the specific mapping to matching rows
+                if 'default' in mappings:
+                    field_mapping = mappings['default']
                     for old_value, new_value in field_mapping.items():
                         value_mask = df[field_name] == old_value
                         combined_mask = condition_mask & value_mask
                         
                         if combined_mask.any():
                             modified_series.loc[combined_mask] = new_value
-                            self.logger.debug(f"Applied conditional mapping: {condition_field}={condition_value} "
+                            self.logger.debug(f"Applied conditional mapping: {condition_field} NOT starts with '{condition_value}' "
                                             f"-> {field_name}: {old_value} -> {new_value} "
                                             f"({combined_mask.sum()} rows)")
+            else:
+                # Original logic: exact matching
+                for condition_value, field_mapping in mappings.items():
+                    # Find rows where condition field matches the condition value
+                    condition_mask = df[condition_field] == condition_value
+                    
+                    if condition_mask.any():
+                        # Apply the specific mapping to matching rows
+                        for old_value, new_value in field_mapping.items():
+                            value_mask = df[field_name] == old_value
+                            combined_mask = condition_mask & value_mask
+                            
+                            if combined_mask.any():
+                                modified_series.loc[combined_mask] = new_value
+                                self.logger.debug(f"Applied conditional mapping: {condition_field}={condition_value} "
+                                                f"-> {field_name}: {old_value} -> {new_value} "
+                                                f"({combined_mask.sum()} rows)")
             
             # Update the dataframe
             df[field_name] = modified_series

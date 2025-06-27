@@ -538,3 +538,53 @@ class TestReconciliationEngine:
         
         # Should still work, just without applying conditional mapping
         assert results['statistics']['matched'] == 1
+
+    def test_conditional_mapping_not_starts_with(self):
+        """Test conditional mapping with 'not_starts_with' condition type."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'counterparty'
+                    },
+                    {
+                        'name': 'currency1',
+                        'conditional_mapping': {
+                            'condition_field': 'counterparty',
+                            'condition_type': 'not_starts_with',
+                            'condition_value': 'ABC',
+                            'mappings': {
+                                'default': {
+                                    'KRA': 'KRW'
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3, 4],
+            'counterparty': ['XYZ Corp', 'ABC_Bank', 'DEF Ltd', 'ABC Corp'],
+            'currency1': ['KRA', 'KRA', 'KRA', 'KRA']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3, 4],
+            'counterparty': ['XYZ Corp', 'ABC_Bank', 'DEF Ltd', 'ABC Corp'],
+            'currency1': ['KRW', 'KRA', 'KRW', 'KRA']  # Expected results after mapping
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        # All records should match after conditional mapping is applied
+        assert results['statistics']['matched'] == 4
+        assert results['statistics']['different'] == 0
+        
+        # Verify the mapping was applied correctly by checking the processed source data
+        # We can access the actual processed data through the reconciliation engine's internal data
+        # For testing purposes, we'll verify by running the reconciliation and checking it succeeds
+        # The key test is that all records match, which means the conditional mapping worked

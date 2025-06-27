@@ -107,13 +107,35 @@ reconciliation:
     # These fields are used as conditions for conditional mappings below
     - name: market_code
     - name: trade_type
+    - name: counterparty
     
     # CONDITIONAL MAPPING EXAMPLES
     # ============================
     # Conditional mappings apply different value mappings based on another field's value
     # This is useful when the same field has different meaning or formats in different contexts
+    #
+    # Supported condition types:
+    # - 'equals' (default): Apply mapping when condition_field equals specific values
+    # - 'not_starts_with': Apply mapping when condition_field does NOT start with condition_value
+    #
+    # For 'not_starts_with', use 'default' as the mapping key and specify condition_value
     
-    # EXAMPLE 15: Trade status mapping based on trade type
+    # EXAMPLE 15: Currency mapping based on counterparty type
+    # Map KRA to KRW when counterparty does not start with ABC
+    - name: currency1
+      conditional_mapping:
+        condition_field: counterparty
+        condition_type: "not_starts_with"  # Check if counterparty does NOT start with specific value
+        condition_value: "ABC"
+        mappings:
+          # When counterparty does NOT start with "ABC", apply these mappings
+          "default":
+            "KRA": "KRW"
+            # Add other currency mappings as needed
+            # "USD": "USD"  # Keep USD as is
+            # "EUR": "EUR"  # Keep EUR as is
+    
+    # EXAMPLE 16: Trade status mapping based on trade type
     # Different trade types use different status codes
     - name: trade_status_conditional
       conditional_mapping:
@@ -141,7 +163,7 @@ reconciliation:
             "C": "Expired"
             "R": "Failed"
     
-    # EXAMPLE 16: Currency formatting based on market
+    # EXAMPLE 17: Currency formatting based on market
     # Different markets format currency amounts differently
     - name: settlement_currency
       conditional_mapping:
@@ -166,7 +188,7 @@ reconciliation:
             "JPY": "Japanese Yen"
             "HKD": "Hong Kong Dollar"
     
-    # EXAMPLE 17: Settlement instructions based on asset class and market
+    # EXAMPLE 18: Settlement instructions based on asset class and market
     - name: settlement_instruction
       conditional_mapping:
         condition_field: asset_class

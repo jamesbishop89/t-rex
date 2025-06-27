@@ -349,3 +349,77 @@ class TestConfigParser:
         # Should parse successfully
         result = parser.parse_config(str(config_file))
         assert 'reconciliation' in result
+
+    def test_conditional_mapping_not_starts_with_validation(self, temp_dir):
+        """Test validation of conditional mapping with 'not_starts_with' condition type."""
+        parser = ConfigParser()
+        
+        # Valid config with not_starts_with condition
+        valid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'counterparty'
+                    },
+                    {
+                        'name': 'currency1',
+                        'conditional_mapping': {
+                            'condition_field': 'counterparty',
+                            'condition_type': 'not_starts_with',
+                            'condition_value': 'ABC',
+                            'mappings': {
+                                'default': {
+                                    'KRA': 'KRW'
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "not_starts_with_valid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(valid_config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result
+
+    def test_conditional_mapping_not_starts_with_missing_value(self, temp_dir):
+        """Test validation failure when 'not_starts_with' is missing condition_value."""
+        parser = ConfigParser()
+        
+        # Invalid config - missing condition_value for not_starts_with
+        invalid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'counterparty'
+                    },
+                    {
+                        'name': 'currency1',
+                        'conditional_mapping': {
+                            'condition_field': 'counterparty',
+                            'condition_type': 'not_starts_with',
+                            # Missing condition_value
+                            'mappings': {
+                                'default': {
+                                    'KRA': 'KRW'
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "not_starts_with_invalid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(invalid_config, f)
+        
+        # Should raise ValueError for missing condition_value
+        with pytest.raises(ValueError, match="missing required 'condition_value'"):
+            parser.parse_config(str(config_file))

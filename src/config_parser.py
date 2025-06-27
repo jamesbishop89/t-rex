@@ -45,7 +45,9 @@ class ConfigParser(LoggerMixin):
             SchemaOptional('mapping'): dict,  # Optional mapping dictionary
             SchemaOptional('conditional_mapping'): {  # New: conditional mapping based on another field
                 'condition_field': And(str, len),  # Field name to check condition against
-                'mappings': dict  # Dictionary where keys are condition values, values are mapping dicts
+                'mappings': dict,  # Dictionary where keys are condition values, values are mapping dicts
+                SchemaOptional('condition_type'): And(str, lambda x: x in ['equals', 'not_starts_with']),  # Type of condition check
+                SchemaOptional('condition_value'): str  # Value to check against (for specific condition types)
             },
             SchemaOptional('transformation'): And(str, self._validate_lambda),  # Optional lambda string
             SchemaOptional('tolerance'): Or(
@@ -317,13 +319,13 @@ class ConfigParser(LoggerMixin):
     
     def _validate_conditional_mappings(self, config: Dict[str, Any]) -> None:
         """
-        Validate conditional mappings reference existing fields.
+        Validate conditional mappings reference existing fields and have valid condition types.
         
         Args:
             config: Parsed configuration dictionary
             
         Raises:
-            ValueError: If conditional mapping references non-existent field
+            ValueError: If conditional mapping references non-existent field or has invalid condition type
         """
         fields = config['reconciliation']['fields']
         field_names = [field['name'] for field in fields]
@@ -332,7 +334,10 @@ class ConfigParser(LoggerMixin):
         
         for field in fields:
             if 'conditional_mapping' in field:
-                condition_field = field['conditional_mapping']['condition_field']
+                condition_mapping = field['conditional_mapping']
+                condition_field = condition_mapping['condition_field']
+                condition_type = condition_mapping.get('condition_type', 'equals')
+                condition_value = condition_mapping.get('condition_value')
                 
                 # Check if condition field exists in the configuration
                 if condition_field not in all_available_fields:
@@ -340,6 +345,13 @@ class ConfigParser(LoggerMixin):
                         f"Conditional mapping for field '{field['name']}' references "
                         f"non-existent condition field '{condition_field}'. "
                         f"Available fields: {sorted(all_available_fields)}"
+                    )
+                
+                # Validate condition type requirements
+                if condition_type == 'not_starts_with' and not condition_value:
+                    raise ValueError(
+                        f"Conditional mapping for field '{field['name']}' uses 'not_starts_with' "
+                        f"condition type but missing required 'condition_value'"
                     )
                 
                 # Validate that both regular mapping and conditional mapping are not used together
@@ -350,4 +362,4 @@ class ConfigParser(LoggerMixin):
                     )
                 
                 self.logger.debug(f"Validated conditional mapping for field '{field['name']}' "
-                                f"based on condition field '{condition_field}'")
+                                f"based on condition field '{condition_field}' with type '{condition_type}'")
