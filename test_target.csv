@@ -1,4 +1,0 @@
-trade_id,account_id,status,amount,description
-1,ACC001,A,100.50,Trade A
-2,ACC002,P,250.75,Trade B
-3,ACC003,C,75.30,Trade C
