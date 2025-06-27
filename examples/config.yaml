@@ -12,6 +12,18 @@ reconciliation:
   # FIELDS SECTION
   # --------------
   # Configure each field with optional mappings, transformations, and tolerances
+  # 
+  # Available options for each field:
+  # - name: Field name (required)
+  # - mapping: Value mapping dictionary
+  # - conditional_mapping: Conditional value mapping based on another field
+  # - transformation: Lambda function for data transformation
+  # - tolerance: Tolerance for numeric comparisons (absolute or percentage)
+  # - ignore: Boolean to ignore field in comparison
+  # - apply_to: Which dataset(s) to apply mapping/transformation to:
+  #   * "both" (default) - Apply to both source and target
+  #   * "source" - Apply only to source data
+  #   * "target" - Apply only to target data
   fields:
     
     # EXAMPLE 1: Trade price with PERCENTAGE tolerance (market volatility)
@@ -37,10 +49,19 @@ reconciliation:
         "Pending": "P"
         "NULL": "Unknown"
         "": "Unknown"
+      apply_to: "both"  # Apply mapping to both source and target (default behavior)
+        
+    # EXAMPLE 4b: Source-only mapping example
+    - name: source_specific_field
+      mapping:
+        "Internal_Code_A": "A"
+        "Internal_Code_B": "B"
+      apply_to: "source"  # Only apply mapping to source data
         
     # EXAMPLE 5: Trade date field with TRANSFORMATION
     - name: trade_date
       transformation: "lambda x: x.strip().replace('/', '-')"
+      apply_to: "target"  # Only apply transformation to target data
       
     # EXAMPLE 6: Net amount with TRANSFORMATION + TOLERANCE
     - name: net_amount
@@ -116,98 +137,97 @@ reconciliation:
     #
     # Supported condition types:
     # - 'equals' (default): Apply mapping when condition_field equals specific values
-    # - 'not_starts_with': Apply mapping when condition_field does NOT start with condition_value
-    #
-    # For 'not_starts_with', use 'default' as the mapping key and specify condition_value
+    # =======================
+    # CONDITIONAL MAPPING EXAMPLES
+    # =======================
+    # These examples work with the provided sample data and demonstrate 
+    # various conditional mapping capabilities
     
-    # EXAMPLE 15: Currency mapping based on counterparty type
-    # Map KRA to KRW when counterparty does not start with ABC
-    - name: currency1
-      conditional_mapping:
-        condition_field: counterparty
-        condition_type: "not_starts_with"  # Check if counterparty does NOT start with specific value
-        condition_value: "ABC"
-        mappings:
-          # When counterparty does NOT start with "ABC", apply these mappings
-          "default":
-            "KRA": "KRW"
-            # Add other currency mappings as needed
-            # "USD": "USD"  # Keep USD as is
-            # "EUR": "EUR"  # Keep EUR as is
-    
-    # EXAMPLE 16: Trade status mapping based on trade type
-    # Different trade types use different status codes
+    # EXAMPLE 15: Trade status mapping based on asset class
+    # Different asset classes use different status terminology
     - name: trade_status_conditional
       conditional_mapping:
         condition_field: asset_class  # Base the mapping on asset class
+        condition_type: "equals"  # When asset_class equals specific value
+        condition_value: "EQ"  # For equity trades
         mappings:
-          # For equity trades, use these status mappings
-          "EQ":
+          "default":  # When asset_class = "EQ", apply these mappings
             "N": "New"
-            "PF": "Partially Filled"
             "F": "Filled"
+            "PF": "Partially Filled"
             "C": "Cancelled"
-            "R": "Rejected"
-          # For fixed income trades, use different status mappings
-          "FI":
-            "N": "New Order"
-            "PF": "Partial Fill"
-            "F": "Complete"
-            "C": "Void"
-            "R": "Declined"
-          # For derivatives, use yet another set of mappings
-          "DV":
-            "N": "Pending"
-            "PF": "Executing"
-            "F": "Executed"
-            "C": "Expired"
-            "R": "Failed"
     
-    # EXAMPLE 17: Currency formatting based on market
-    # Different markets format currency amounts differently
+    # EXAMPLE 16: Settlement currency mapping based on market region
+    # Different markets have different currency display formats
     - name: settlement_currency
       conditional_mapping:
         condition_field: market_code
+        condition_type: "equals"
+        condition_value: "US"
         mappings:
-          # US market uses standard USD codes
-          "US":
+          "default":  # For US market trades
             "USD": "US Dollar"
-            "EUR": "Euro"
-            "GBP": "Pound Sterling"
-            "CAD": "Canadian Dollar"
-          # European market uses different conventions
-          "EU":
-            "USD": "US-Dollar"
-            "EUR": "European Euro"
-            "GBP": "British Pound"
-            "CHF": "Swiss Franc"
-          # Asian market uses local conventions
-          "ASIA":
-            "USD": "US_Dollar"
-            "EUR": "Euro_Currency"
-            "JPY": "Japanese Yen"
-            "HKD": "Hong Kong Dollar"
     
-    # EXAMPLE 18: Settlement instructions based on asset class and market
+    # EXAMPLE 17: Settlement instructions based on asset class  
+    # Different asset classes have different settlement conventions
     - name: settlement_instruction
       conditional_mapping:
         condition_field: asset_class
+        condition_type: "equals" 
+        condition_value: "FI"  # Fixed Income assets
         mappings:
-          "EQ":  # Equity settlements
-            "DVP": "Delivery vs Payment"
-            "FOP": "Free of Payment"
-            "HOLD": "Hold in Account"
-            "AUTO": "Auto Settlement"
-          "FI":  # Fixed Income settlements
+          "default":  # For Fixed Income trades
             "DVP": "Bond Settlement DVP"
-            "FOP": "Bond Settlement FOP"
             "REPO": "Repurchase Agreement"
-            "ROLL": "Rollover Settlement"
-          "DV":  # Derivatives settlements
-            "CASH": "Cash Settlement"
-            "PHYS": "Physical Delivery"
-            "NET": "Net Settlement"
-            "CLOSE": "Close Out"
+    
+    # EXAMPLE 18: Advanced condition - starts_with
+    # Map account prefixes to account types
+    - name: account_type
+      conditional_mapping:
+        condition_field: account_id
+        condition_type: "starts_with"
+        condition_value: "ACC"
+        mappings:
+          "default":  # When account_id starts with "ACC"
+            "UNKNOWN": "CUSTOMER_ACCOUNT"
+    
+    # EXAMPLE 19: Numeric comparison - greater_than
+    # Flag high-value trades for special processing
+    - name: trade_size_flag
+      conditional_mapping:
+        condition_field: execution_price
+        condition_type: "greater_than"
+        condition_value: "200"  # Trades over 200
+        mappings:
+          "default":
+            "NORMAL": "HIGH_VALUE"
+            "STANDARD": "HIGH_VALUE"
+    
+    # EXAMPLE 20: Apply_to parameter - source only mapping
+    # Apply different processing rules to source data only
+    - name: source_system_flag
+      conditional_mapping:
+        condition_field: market_code
+        condition_type: "equals"
+        condition_value: "ASIA"
+        apply_to: "source"  # Only apply to source dataset
+        mappings:
+          "default":
+            "": "APAC_SOURCE"  # Add flag for Asian market trades
+
+    # =========================================
+    # MORE CONDITIONAL MAPPING EXAMPLES  
+    # =========================================
+    # The examples above demonstrate basic conditional mapping with the sample data.
+    # For comprehensive examples of all 18 condition types (regex, numeric comparisons,
+    # list operations, null checks, etc.), see TECHNICAL_DOCS.md
+    #
+    # Supported condition types:
+    # String: equals, not_equals, starts_with, ends_with, contains, not_contains
+    # Numeric: less_than, greater_than, less_than_equal, greater_than_equal  
+    # List: in_list, not_in_list
+    # Pattern: regex_match, regex_not_match
+    # Null: is_null, is_not_null
 
 # OUTPUT CONFIGURATION
 # ===================

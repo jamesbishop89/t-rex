@@ -408,14 +408,14 @@ class TestExcelGenerator:
         
         # Check 100% match rate formatting (green)
         perfect_cell = ws.cell(row=perfect_row, column=5)  # Column E
-        assert perfect_cell.fill.start_color.rgb == '0090EE90', "Perfect match rate should have green background"
-        assert perfect_cell.font.color.rgb == '00006400', "Perfect match rate should have dark green text"
+        assert perfect_cell.fill.start_color.rgb == '00C6EFCE', "Perfect match rate should have green background"
+        assert perfect_cell.font.color.rgb == '00006100', "Perfect match rate should have dark green text"
         assert perfect_cell.font.bold == True, "Perfect match rate should be bold"
         
         # Check <100% match rate formatting (red)
         imperfect_cell = ws.cell(row=imperfect_row, column=5)  # Column E
-        assert imperfect_cell.fill.start_color.rgb == '00FFB6C1', "Imperfect match rate should have red background"
-        assert imperfect_cell.font.color.rgb == '00DC143C', "Imperfect match rate should have dark red text"
+        assert imperfect_cell.fill.start_color.rgb == '00FFC7CE', "Imperfect match rate should have red background"
+        assert imperfect_cell.font.color.rgb == '009C0006', "Imperfect match rate should have dark red text"
         assert imperfect_cell.font.bold == True, "Imperfect match rate should be bold"
     
     def test_values_are_different_method(self):

@@ -123,6 +123,13 @@ reconciliation:
 - **Edge Case Testing**: Invalid inputs, empty data, missing fields
 - **Performance Testing**: Large dataset handling verification
 
+## ✅ Advanced Features (Latest Enhancement)
+- [x] **Conditional Mapping** - Apply different mappings based on field conditions
+- [x] **18 Condition Types** - String, numeric, list, regex, and null comparisons
+- [x] **Dataset-Specific Processing** - Apply mappings/transformations to source, target, or both
+- [x] **Business Rules Support** - Complex conditional logic for data harmonization
+- [x] **Comprehensive Validation** - Schema validation for all condition types and parameters
+
 ## 📊 Demonstrated Results
 
 The example reconciliation shows T-Rex successfully:

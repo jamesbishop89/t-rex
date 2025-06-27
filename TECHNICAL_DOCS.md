@@ -193,22 +193,119 @@ reconciliation:
 - **Absolute**: `0.01` (numeric value)
 - **Percentage**: `"1%"` (string with % suffix)
 
-## Extension Points
+## Advanced Field Configuration
 
-### Adding New File Formats
-1. Add loader method to `DataLoader._supported_extensions`
-2. Implement `_load_<format>()` method
-3. Add format-specific validation
+#### Dataset-Specific Application (`apply_to`)
+Fields can be configured to apply mappings and transformations to specific datasets:
 
-### Custom Transformations
-- Lambda functions support arbitrary Python expressions
-- Access to full pandas/numpy functionality
-- Error handling for invalid transformations
+```yaml
+fields:
+  - name: field_name
+    mapping: {...}
+    apply_to: "source"    # Options: "source", "target", "both" (default)
+    
+  - name: another_field
+    conditional_mapping:
+      condition_field: some_field
+      apply_to: "target"  # Apply conditional mapping only to target dataset
+      mappings: {...}
+```
 
-### Output Formats
-- Excel generation is modular
-- Additional generators can be added (PDF, HTML, etc.)
-- Consistent interface for all generators
+#### Conditional Mapping
+Apply different value mappings based on conditions from other fields:
+
+```yaml
+fields:
+  - name: status
+    conditional_mapping:
+      condition_field: trade_type          # Field to check condition against
+      condition_type: "equals"             # Type of condition (see below)
+      condition_value: "EQUITY"            # Value to compare (if required)
+      condition_list: ["VAL1", "VAL2"]     # List of values (for in_list/not_in_list)
+      apply_to: "both"                     # Dataset application scope
+      mappings:
+        "default":                         # When condition is true, apply these mappings
+          "N": "New"
+          "F": "Filled"
+```
+
+#### Supported Condition Types
+
+**String Comparison:**
+- `equals`: Exact match with condition_value
+- `not_equals`: Does not match condition_value
+- `starts_with`: Begins with condition_value
+- `not_starts_with`: Does not begin with condition_value
+- `ends_with`: Ends with condition_value
+- `not_ends_with`: Does not end with condition_value
+- `contains`: Contains condition_value substring
+- `not_contains`: Does not contain condition_value substring
+
+**Numeric Comparison:**
+- `less_than`: Numerically less than condition_value
+- `less_than_equal`: Numerically less than or equal to condition_value
+- `greater_than`: Numerically greater than condition_value
+- `greater_than_equal`: Numerically greater than or equal to condition_value
+
+**List Operations:**
+- `in_list`: Value is in condition_list
+- `not_in_list`: Value is not in condition_list
+
+**Pattern Matching:**
+- `regex_match`: Matches regex pattern in condition_value
+- `regex_not_match`: Does not match regex pattern in condition_value
+
+**Null Checks:**
+- `is_null`: Field value is null/empty/NaN
+- `is_not_null`: Field value is not null/empty/NaN
+
+#### Examples
+
+**Business Rule Example:**
+```yaml
+# Map currency codes differently based on market region
+- name: currency_display
+  conditional_mapping:
+    condition_field: market_region
+    condition_type: "equals"
+    condition_value: "APAC"
+    mappings:
+      "default":
+        "USD": "US Dollar"
+        "JPY": "Japanese Yen"
+        "HKD": "Hong Kong Dollar"
+
+# Handle large trades differently
+- name: processing_flag
+  conditional_mapping:
+    condition_field: notional_amount
+    condition_type: "greater_than"
+    condition_value: "1000000"
+    mappings:
+      "default":
+        "AUTO": "MANUAL_REVIEW"
+
+# Premium client handling
+- name: priority_level
+  conditional_mapping:
+    condition_field: client_tier
+    condition_type: "in_list"
+    condition_list: ["PREMIUM", "VIP", "INSTITUTIONAL"]
+    mappings:
+      "default":
+        "STANDARD": "HIGH"
+        "LOW": "MEDIUM"
+
+# Regex pattern matching for account types
+- name: account_category
+  conditional_mapping:
+    condition_field: account_number
+    condition_type: "regex_match"
+    condition_value: "^[0-9]{6}[A-Z]{2}$"
+    mappings:
+      "default":
+        "UNKNOWN": "INSTITUTIONAL"
+```
 
 ## Production Deployment
 

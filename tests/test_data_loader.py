@@ -155,8 +155,8 @@ class TestDataLoader:
         df = loader.load_data(str(csv_file))
         
         # Check that NULL and N/A are treated as NaN
-        assert pd.isna(df['value'].iloc[1])
-        assert pd.isna(df['status'].iloc[2])
+        assert pd.isna(df['value'].iloc[1])  # Row 1: NULL should be NaN
+        assert pd.isna(df['value'].iloc[2])  # Row 2: N/A should be NaN
     
     def test_load_excel_file(self, temp_dir):
         """Test loading Excel file (if openpyxl is available)."""

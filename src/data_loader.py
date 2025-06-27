@@ -103,7 +103,10 @@ class DataLoader(LoggerMixin):
         }
         default_args.update(kwargs)
         
-        return pd.read_csv(file_path, **default_args)
+        try:
+            return pd.read_csv(file_path, **default_args)
+        except pd.errors.EmptyDataError:
+            raise ValueError(f"Data file is empty: {file_path}")
     
     def _load_excel(self, file_path: str, **kwargs) -> pd.DataFrame:
         """
@@ -177,11 +180,15 @@ class DataLoader(LoggerMixin):
         if df is None:
             raise ValueError(f"Failed to load data from {file_path}: DataFrame is None")
         
+        if len(df.columns) == 0:
+            # Check if it's completely empty (no rows) or just no columns
+            if len(df) == 0:
+                raise ValueError(f"Data file is empty: {file_path}")
+            else:
+                raise ValueError(f"Data file has no columns: {file_path}")
+        
         if df.empty:
             raise ValueError(f"Data file is empty: {file_path}")
-        
-        if len(df.columns) == 0:
-            raise ValueError(f"Data file has no columns: {file_path}")
         
         # Check for completely empty columns
         empty_columns = df.columns[df.isnull().all()].tolist()

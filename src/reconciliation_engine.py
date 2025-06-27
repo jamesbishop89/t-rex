@@ -154,14 +154,22 @@ class ReconciliationEngine(LoggerMixin):
                 self.logger.warning(f"Field {field_name} not found in {dataset_type} data")
                 continue
             
+            # Check if we should apply mappings to this dataset
+            apply_to = field_config.get('apply_to', 'both')
+            should_apply = apply_to == 'both' or apply_to == dataset_type
+            
             # Apply mapping first
-            if 'mapping' in field_config:
+            if 'mapping' in field_config and should_apply:
                 df = self._apply_mapping(df, field_name, field_config['mapping'], dataset_type)
             elif 'conditional_mapping' in field_config:
-                df = self._apply_conditional_mapping(df, field_name, field_config['conditional_mapping'], dataset_type)
+                # Check apply_to for conditional mapping (can be nested)
+                conditional_apply_to = field_config['conditional_mapping'].get('apply_to', apply_to)
+                should_apply_conditional = conditional_apply_to == 'both' or conditional_apply_to == dataset_type
+                if should_apply_conditional:
+                    df = self._apply_conditional_mapping(df, field_name, field_config['conditional_mapping'], dataset_type)
             
             # Apply transformation second
-            if 'transformation' in field_config:
+            if 'transformation' in field_config and should_apply:
                 df = self._apply_transformation(df, field_name, field_config['transformation'], dataset_type)
         
         self.logger.info(f"{dataset_type} data preprocessing completed")
@@ -364,7 +372,7 @@ class ReconciliationEngine(LoggerMixin):
                 zero_source_mask = abs_source == 0
                 non_zero_source_mask = ~zero_source_mask
                 
-                matches = pd.Series(False, index=source_series.index)
+                matches = pd.Series(False, index=source_series.index, dtype=bool)
                 
                 # For non-zero source values, use percentage tolerance
                 matches[non_zero_source_mask] = (
@@ -375,19 +383,23 @@ class ReconciliationEngine(LoggerMixin):
                 matches[zero_source_mask] = target_numeric[zero_source_mask] == 0
                 
             else:
-                # Absolute tolerance
+                # Absolute tolerance - add small epsilon to handle floating-point precision
                 tolerance_value = float(tolerance_config)
-                matches = np.abs(source_numeric - target_numeric) <= tolerance_value
+                # Add small epsilon (1e-9) to handle floating-point precision issues
+                effective_tolerance = tolerance_value + 1e-9
+                matches = np.isclose(source_numeric, target_numeric, atol=effective_tolerance, rtol=0)
+                matches = pd.Series(matches, index=source_series.index, dtype=bool)
             
             # Handle NaN comparisons
             both_nan = source_numeric.isna() & target_numeric.isna()
-            matches = matches | both_nan
+            matches = (matches | both_nan).astype(bool)
             
             return matches
             
         except Exception as e:
             self.logger.warning(f"Tolerance comparison failed, falling back to exact match: {e}")
-            return (source_series == target_series) | (source_series.isna() & target_series.isna())
+            exact_matches = (source_series == target_series) | (source_series.isna() & target_series.isna())
+            return exact_matches.astype(bool)
     
     def _categorize_records(self, merged_df: pd.DataFrame, 
                           comparison_results: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
@@ -512,6 +524,7 @@ class ReconciliationEngine(LoggerMixin):
             mappings = conditional_mapping['mappings']
             condition_type = conditional_mapping.get('condition_type', 'equals')
             condition_value = conditional_mapping.get('condition_value', None)
+            condition_list = conditional_mapping.get('condition_list', None)
             
             if condition_field not in df.columns:
                 self.logger.warning(f"Condition field {condition_field} not found in {dataset_type} data")
@@ -522,11 +535,39 @@ class ReconciliationEngine(LoggerMixin):
             # Create a copy of the field to modify
             modified_series = df[field_name].copy()
             
+            # Get condition field values and convert to string for most operations
+            condition_values = df[condition_field]
+            
             # Handle different condition types
-            if condition_type == 'not_starts_with' and condition_value:
-                # Special case: apply mapping when condition field does NOT start with condition_value
-                condition_mask = ~df[condition_field].astype(str).str.startswith(condition_value, na=False)
+            if condition_type in ['equals', 'not_equals', 'starts_with', 'not_starts_with', 
+                                'ends_with', 'not_ends_with', 'contains', 'not_contains',
+                                'regex_match', 'regex_not_match'] and condition_value:
                 
+                # Convert to string for string operations
+                condition_str_values = condition_values.astype(str)
+                
+                if condition_type == 'equals':
+                    condition_mask = condition_str_values == condition_value
+                elif condition_type == 'not_equals':
+                    condition_mask = condition_str_values != condition_value
+                elif condition_type == 'starts_with':
+                    condition_mask = condition_str_values.str.startswith(condition_value, na=False)
+                elif condition_type == 'not_starts_with':
+                    condition_mask = ~condition_str_values.str.startswith(condition_value, na=False)
+                elif condition_type == 'ends_with':
+                    condition_mask = condition_str_values.str.endswith(condition_value, na=False)
+                elif condition_type == 'not_ends_with':
+                    condition_mask = ~condition_str_values.str.endswith(condition_value, na=False)
+                elif condition_type == 'contains':
+                    condition_mask = condition_str_values.str.contains(condition_value, na=False)
+                elif condition_type == 'not_contains':
+                    condition_mask = ~condition_str_values.str.contains(condition_value, na=False)
+                elif condition_type == 'regex_match':
+                    condition_mask = condition_str_values.str.match(condition_value, na=False)
+                elif condition_type == 'regex_not_match':
+                    condition_mask = ~condition_str_values.str.match(condition_value, na=False)
+                
+                # Apply mapping for the condition
                 if 'default' in mappings:
                     field_mapping = mappings['default']
                     for old_value, new_value in field_mapping.items():
@@ -535,14 +576,88 @@ class ReconciliationEngine(LoggerMixin):
                         
                         if combined_mask.any():
                             modified_series.loc[combined_mask] = new_value
-                            self.logger.debug(f"Applied conditional mapping: {condition_field} NOT starts with '{condition_value}' "
+                            self.logger.debug(f"Applied conditional mapping: {condition_field} {condition_type} '{condition_value}' "
+                                            f"-> {field_name}: {old_value} -> {new_value} "
+                                            f"({combined_mask.sum()} rows)")
+                            
+            elif condition_type in ['less_than', 'less_than_equal', 'greater_than', 'greater_than_equal'] and condition_value:
+                try:
+                    # Convert condition_value to appropriate numeric type
+                    numeric_condition_value = pd.to_numeric(condition_value)
+                    numeric_condition_values = pd.to_numeric(condition_values, errors='coerce')
+                    
+                    if condition_type == 'less_than':
+                        condition_mask = numeric_condition_values < numeric_condition_value
+                    elif condition_type == 'less_than_equal':
+                        condition_mask = numeric_condition_values <= numeric_condition_value
+                    elif condition_type == 'greater_than':
+                        condition_mask = numeric_condition_values > numeric_condition_value
+                    elif condition_type == 'greater_than_equal':
+                        condition_mask = numeric_condition_values >= numeric_condition_value
+                    
+                    # Remove NaN values from condition mask
+                    condition_mask = condition_mask.fillna(False)
+                    
+                    # Apply mapping for the condition
+                    if 'default' in mappings:
+                        field_mapping = mappings['default']
+                        for old_value, new_value in field_mapping.items():
+                            value_mask = df[field_name] == old_value
+                            combined_mask = condition_mask & value_mask
+                            
+                            if combined_mask.any():
+                                modified_series.loc[combined_mask] = new_value
+                                self.logger.debug(f"Applied conditional mapping: {condition_field} {condition_type} {condition_value} "
+                                                f"-> {field_name}: {old_value} -> {new_value} "
+                                                f"({combined_mask.sum()} rows)")
+                                
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"Could not perform numeric comparison for {condition_type}: {e}")
+                    
+            elif condition_type in ['in_list', 'not_in_list'] and condition_list:
+                condition_str_values = condition_values.astype(str)
+                
+                if condition_type == 'in_list':
+                    condition_mask = condition_str_values.isin([str(v) for v in condition_list])
+                elif condition_type == 'not_in_list':
+                    condition_mask = ~condition_str_values.isin([str(v) for v in condition_list])
+                
+                # Apply mapping for the condition
+                if 'default' in mappings:
+                    field_mapping = mappings['default']
+                    for old_value, new_value in field_mapping.items():
+                        value_mask = df[field_name] == old_value
+                        combined_mask = condition_mask & value_mask
+                        
+                        if combined_mask.any():
+                            modified_series.loc[combined_mask] = new_value
+                            self.logger.debug(f"Applied conditional mapping: {condition_field} {condition_type} {condition_list} "
+                                            f"-> {field_name}: {old_value} -> {new_value} "
+                                            f"({combined_mask.sum()} rows)")
+                            
+            elif condition_type in ['is_null', 'is_not_null']:
+                if condition_type == 'is_null':
+                    condition_mask = condition_values.isna()
+                elif condition_type == 'is_not_null':
+                    condition_mask = condition_values.notna()
+                
+                # Apply mapping for the condition
+                if 'default' in mappings:
+                    field_mapping = mappings['default']
+                    for old_value, new_value in field_mapping.items():
+                        value_mask = df[field_name] == old_value
+                        combined_mask = condition_mask & value_mask
+                        
+                        if combined_mask.any():
+                            modified_series.loc[combined_mask] = new_value
+                            self.logger.debug(f"Applied conditional mapping: {condition_field} {condition_type} "
                                             f"-> {field_name}: {old_value} -> {new_value} "
                                             f"({combined_mask.sum()} rows)")
             else:
-                # Original logic: exact matching
-                for condition_value, field_mapping in mappings.items():
+                # Legacy logic: exact matching for backward compatibility
+                for condition_value_key, field_mapping in mappings.items():
                     # Find rows where condition field matches the condition value
-                    condition_mask = df[condition_field] == condition_value
+                    condition_mask = df[condition_field] == condition_value_key
                     
                     if condition_mask.any():
                         # Apply the specific mapping to matching rows
@@ -552,7 +667,7 @@ class ReconciliationEngine(LoggerMixin):
                             
                             if combined_mask.any():
                                 modified_series.loc[combined_mask] = new_value
-                                self.logger.debug(f"Applied conditional mapping: {condition_field}={condition_value} "
+                                self.logger.debug(f"Applied conditional mapping: {condition_field}={condition_value_key} "
                                                 f"-> {field_name}: {old_value} -> {new_value} "
                                                 f"({combined_mask.sum()} rows)")
             

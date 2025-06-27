@@ -5,6 +5,8 @@ T-Rex is a production-ready Python tool for comparing source and target datasets
 ## Features
 
 - **Flexible Configuration**: YAML-based configuration with support for field mappings, transformations, and tolerances
+- **Advanced Conditional Mapping**: Apply different mappings based on complex logical conditions (equals, contains, regex, numeric comparisons, etc.)
+- **Dataset-Specific Processing**: Configure mappings and transformations to apply only to source, target, or both datasets
 - **Comprehensive Output**: Five Excel sheets with detailed analysis (Summary, Matched, Different, Missing records)
 - **Auto-Sized Excel Columns**: All sheets automatically size columns to fit content for optimal readability
 - **Performance Optimized**: Designed for large datasets (>1M rows)
@@ -33,13 +35,55 @@ python t-rex.py --source source.csv --target target.csv --config config.yaml --o
 
 ```yaml
 reconciliation:
-  keys: [id]
+  keys: [trade_id, account_id]
   fields:
-    - name: amount
-    - name: status
+    - name: execution_price
+      tolerance: "0.1%"
+    - name: trade_status_conditional
+      conditional_mapping:
+        condition_field: asset_class
+        condition_type: "equals"
+        condition_value: "EQ"
+        mappings:
+          "default":
+            "N": "New"
+            "F": "Filled"
+            "PF": "Partially Filled"
 output:
   filename: "my_reconciliation_results"  # Base filename (timestamp added automatically)
 ```
+
+### Advanced Configuration Features
+
+#### Conditional Mapping
+Apply different mappings based on field values:
+```yaml
+- name: settlement_currency
+  conditional_mapping:
+    condition_field: market_code
+    condition_type: "equals"
+    condition_value: "US"
+    mappings:
+      "default":
+        "USD": "US Dollar"
+```
+
+#### Dataset-Specific Processing  
+Apply mappings only to source, target, or both:
+```yaml
+- name: field_name
+  mapping: {...}
+  apply_to: "source"  # Options: "source", "target", "both"
+```
+
+#### Condition Types
+Supports 18 condition types including:
+- String operations: `equals`, `starts_with`, `contains`, `regex_match`
+- Numeric comparisons: `greater_than`, `less_than_equal`  
+- List operations: `in_list`, `not_in_list`
+- Null checks: `is_null`, `is_not_null`
+
+*See `examples/config.yaml` and `TECHNICAL_DOCS.md` for comprehensive examples.*
 
 ### Configuration Options
 

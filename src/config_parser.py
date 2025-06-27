@@ -43,11 +43,18 @@ class ConfigParser(LoggerMixin):
         field_schema = Schema({
             'name': And(str, len),  # Field name must be non-empty string
             SchemaOptional('mapping'): dict,  # Optional mapping dictionary
+            SchemaOptional('apply_to'): And(str, lambda x: x in ['both', 'source', 'target']),  # Which dataset(s) to apply mapping/transformation to
             SchemaOptional('conditional_mapping'): {  # New: conditional mapping based on another field
                 'condition_field': And(str, len),  # Field name to check condition against
                 'mappings': dict,  # Dictionary where keys are condition values, values are mapping dicts
-                SchemaOptional('condition_type'): And(str, lambda x: x in ['equals', 'not_starts_with']),  # Type of condition check
-                SchemaOptional('condition_value'): str  # Value to check against (for specific condition types)
+                SchemaOptional('condition_type'): And(str, lambda x: x in [
+                    'equals', 'not_equals', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
+                    'contains', 'not_contains', 'less_than', 'less_than_equal', 'greater_than', 'greater_than_equal',
+                    'in_list', 'not_in_list', 'regex_match', 'regex_not_match', 'is_null', 'is_not_null'
+                ]),  # Type of condition check
+                SchemaOptional('condition_value'): str,  # Value to check against (for specific condition types)
+                SchemaOptional('condition_list'): list,  # List of values for 'in_list' and 'not_in_list' conditions
+                SchemaOptional('apply_to'): And(str, lambda x: x in ['both', 'source', 'target'])  # Which dataset(s) to apply conditional mapping to
             },
             SchemaOptional('transformation'): And(str, self._validate_lambda),  # Optional lambda string
             SchemaOptional('tolerance'): Or(
@@ -336,8 +343,6 @@ class ConfigParser(LoggerMixin):
             if 'conditional_mapping' in field:
                 condition_mapping = field['conditional_mapping']
                 condition_field = condition_mapping['condition_field']
-                condition_type = condition_mapping.get('condition_type', 'equals')
-                condition_value = condition_mapping.get('condition_value')
                 
                 # Check if condition field exists in the configuration
                 if condition_field not in all_available_fields:
@@ -347,13 +352,6 @@ class ConfigParser(LoggerMixin):
                         f"Available fields: {sorted(all_available_fields)}"
                     )
                 
-                # Validate condition type requirements
-                if condition_type == 'not_starts_with' and not condition_value:
-                    raise ValueError(
-                        f"Conditional mapping for field '{field['name']}' uses 'not_starts_with' "
-                        f"condition type but missing required 'condition_value'"
-                    )
-                
                 # Validate that both regular mapping and conditional mapping are not used together
                 if 'mapping' in field:
                     raise ValueError(
@@ -361,5 +359,52 @@ class ConfigParser(LoggerMixin):
                         f"Please use only one mapping type."
                     )
                 
-                self.logger.debug(f"Validated conditional mapping for field '{field['name']}' "
-                                f"based on condition field '{condition_field}' with type '{condition_type}'")
+                # Check if this uses advanced condition format (with condition_type)
+                has_condition_type = 'condition_type' in condition_mapping
+                
+                # Validate advanced condition format
+                if has_condition_type:
+                    condition_type = condition_mapping['condition_type']
+                    condition_value = condition_mapping.get('condition_value')
+                    
+                    # Validate condition type requirements
+                    condition_types_requiring_value = [
+                        'equals', 'not_equals', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
+                        'contains', 'not_contains', 'less_than', 'less_than_equal', 'greater_than', 
+                        'greater_than_equal', 'regex_match', 'regex_not_match'
+                    ]
+                    condition_types_requiring_list = ['in_list', 'not_in_list']
+                    condition_types_no_value = ['is_null', 'is_not_null']
+                    
+                    if condition_type in condition_types_requiring_value and not condition_value:
+                        raise ValueError(
+                            f"Conditional mapping for field '{field['name']}' uses '{condition_type}' "
+                            f"condition type but missing required 'condition_value'"
+                        )
+                    
+                    if condition_type in condition_types_requiring_list:
+                        condition_list = condition_mapping.get('condition_list')
+                        if not condition_list or not isinstance(condition_list, list):
+                            raise ValueError(
+                                f"Conditional mapping for field '{field['name']}' uses '{condition_type}' "
+                                f"condition type but missing required 'condition_list' (must be a list)"
+                            )
+                    
+                    if condition_type in condition_types_no_value and condition_value:
+                        raise ValueError(
+                            f"Conditional mapping for field '{field['name']}' uses '{condition_type}' "
+                            f"condition type but should not have 'condition_value'"
+                        )
+                    
+                    # Validate regex patterns
+                    if condition_type in ['regex_match', 'regex_not_match'] and condition_value:
+                        try:
+                            import re
+                            re.compile(condition_value)
+                        except re.error as e:
+                            raise ValueError(
+                                f"Invalid regex pattern in condition_value for field '{field['name']}': {e}"
+                            )
+                
+                    self.logger.debug(f"Validated conditional mapping for field '{field['name']}' "
+                                    f"based on condition field '{condition_field}' with type '{condition_type}'")

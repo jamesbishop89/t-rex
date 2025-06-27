@@ -588,3 +588,192 @@ class TestReconciliationEngine:
         # We can access the actual processed data through the reconciliation engine's internal data
         # For testing purposes, we'll verify by running the reconciliation and checking it succeeds
         # The key test is that all records match, which means the conditional mapping worked
+
+    def test_conditional_mapping_starts_with(self):
+        """Test conditional mapping with starts_with condition."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'product_code',
+                            'condition_type': 'starts_with',
+                            'condition_value': 'EQ_',
+                            'mappings': {
+                                'default': {'N': 'Equity_New', 'F': 'Equity_Filled'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'product_code': ['EQ_STOCK', 'EQ_ETF', 'FI_BOND'],
+            'status': ['N', 'F', 'N']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'product_code': ['EQ_STOCK', 'EQ_ETF', 'FI_BOND'],
+            'status': ['Equity_New', 'Equity_Filled', 'N']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        assert results['statistics']['matched'] == 3
+
+    def test_conditional_mapping_greater_than(self):
+        """Test conditional mapping with greater_than condition."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'trade_flag',
+                        'conditional_mapping': {
+                            'condition_field': 'quantity',
+                            'condition_type': 'greater_than',
+                            'condition_value': '10000',
+                            'mappings': {
+                                'default': {'NORMAL': 'LARGE', 'SMALL': 'LARGE'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'quantity': [15000, 5000, 25000],
+            'trade_flag': ['NORMAL', 'SMALL', 'NORMAL']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'quantity': [15000, 5000, 25000],
+            'trade_flag': ['LARGE', 'SMALL', 'LARGE']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        assert results['statistics']['matched'] == 3
+
+    def test_conditional_mapping_in_list(self):
+        """Test conditional mapping with in_list condition."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'client_treatment',
+                        'conditional_mapping': {
+                            'condition_field': 'client_code',
+                            'condition_type': 'in_list',
+                            'condition_list': ['PREM001', 'VIP123'],
+                            'mappings': {
+                                'default': {'STANDARD': 'PRIORITY', 'NORMAL': 'ENHANCED'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'client_code': ['PREM001', 'REGULAR', 'VIP123'],
+            'client_treatment': ['STANDARD', 'NORMAL', 'NORMAL']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'client_code': ['PREM001', 'REGULAR', 'VIP123'],
+            'client_treatment': ['PRIORITY', 'NORMAL', 'ENHANCED']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        assert results['statistics']['matched'] == 3
+
+    def test_conditional_mapping_is_null(self):
+        """Test conditional mapping with is_null condition."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'settlement_date',
+                        'conditional_mapping': {
+                            'condition_field': 'override_settlement',
+                            'condition_type': 'is_null',
+                            'mappings': {
+                                'default': {'': 'T+2', 'NULL': 'T+2'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'override_settlement': [None, 'T+1', None],
+            'settlement_date': ['', 'T+1', 'NULL']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'override_settlement': [None, 'T+1', None],
+            'settlement_date': ['T+2', 'T+1', 'T+2']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        assert results['statistics']['matched'] == 3
+
+    def test_conditional_mapping_regex_match(self):
+        """Test conditional mapping with regex_match condition."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'account_type',
+                        'conditional_mapping': {
+                            'condition_field': 'account_number',
+                            'condition_type': 'regex_match',
+                            'condition_value': '^[0-9]{6}[A-Z]{2}$',
+                            'mappings': {
+                                'default': {'UNKNOWN': 'INSTITUTIONAL'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'account_number': ['123456AB', '789XYZ', '999888CD'],
+            'account_type': ['UNKNOWN', 'GENERIC', 'UNKNOWN']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'account_number': ['123456AB', '789XYZ', '999888CD'],
+            'account_type': ['INSTITUTIONAL', 'GENERIC', 'INSTITUTIONAL']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        assert results['statistics']['matched'] == 3

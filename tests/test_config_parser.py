@@ -423,3 +423,409 @@ class TestConfigParser:
         # Should raise ValueError for missing condition_value
         with pytest.raises(ValueError, match="missing required 'condition_value'"):
             parser.parse_config(str(config_file))
+
+    def test_apply_to_parameter_validation(self, temp_dir):
+        """Test validation of apply_to parameter values."""
+        parser = ConfigParser()
+        
+        # Valid apply_to values
+        valid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'field1',
+                        'mapping': {'A': 'Active'},
+                        'apply_to': 'source'
+                    },
+                    {
+                        'name': 'field2',
+                        'mapping': {'B': 'Beta'},
+                        'apply_to': 'target'
+                    },
+                    {
+                        'name': 'field3',
+                        'mapping': {'C': 'Charlie'},
+                        'apply_to': 'both'
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "apply_to_valid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(valid_config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result
+
+    def test_apply_to_invalid_value(self, temp_dir):
+        """Test validation failure for invalid apply_to value."""
+        parser = ConfigParser()
+        
+        # Invalid apply_to value
+        invalid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'field1',
+                        'mapping': {'A': 'Active'},
+                        'apply_to': 'invalid_value'  # Should fail validation
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "apply_to_invalid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(invalid_config, f)
+        
+        # Should raise SchemaError for invalid apply_to value
+        with pytest.raises(SchemaError):
+            parser.parse_config(str(config_file))
+
+    def test_conditional_mapping_apply_to_validation(self, temp_dir):
+        """Test validation of apply_to parameter in conditional mapping."""
+        parser = ConfigParser()
+        
+        # Valid conditional mapping with apply_to
+        valid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'condition_field'
+                    },
+                    {
+                        'name': 'mapped_field',
+                        'conditional_mapping': {
+                            'condition_field': 'condition_field',
+                            'apply_to': 'source',
+                            'mappings': {
+                                'VALUE': {'A': 'Active'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "conditional_apply_to_valid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(valid_config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result
+
+    def test_condition_type_validation_all_types(self, temp_dir):
+        """Test validation of all supported condition types."""
+        parser = ConfigParser()
+        
+        condition_types = [
+            'equals', 'not_equals', 'starts_with', 'not_starts_with', 
+            'ends_with', 'not_ends_with', 'contains', 'not_contains',
+            'less_than', 'less_than_equal', 'greater_than', 'greater_than_equal',
+            'in_list', 'not_in_list', 'regex_match', 'regex_not_match',
+            'is_null', 'is_not_null'
+        ]
+        
+        for condition_type in condition_types:
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': condition_type,
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            # Add required parameters based on condition type
+            conditional_mapping = config['reconciliation']['fields'][1]['conditional_mapping']
+            
+            if condition_type in ['in_list', 'not_in_list']:
+                conditional_mapping['condition_list'] = ['value1', 'value2']
+            elif condition_type not in ['is_null', 'is_not_null']:
+                conditional_mapping['condition_value'] = 'test_value'
+            
+            config_file = temp_dir / f"condition_{condition_type}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should parse successfully
+            result = parser.parse_config(str(config_file))
+            assert 'reconciliation' in result
+
+    def test_condition_type_missing_value_validation(self, temp_dir):
+        """Test validation of missing required condition_value."""
+        parser = ConfigParser()
+        
+        condition_types_requiring_value = [
+            'equals', 'not_equals', 'starts_with', 'not_starts_with',
+            'ends_with', 'not_ends_with', 'contains', 'not_contains',
+            'less_than', 'less_than_equal', 'greater_than', 'greater_than_equal',
+            'regex_match', 'regex_not_match'
+        ]
+        
+        for condition_type in condition_types_requiring_value:
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': condition_type,
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                                # Missing condition_value
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            config_file = temp_dir / f"missing_value_{condition_type}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should raise ValueError
+            with pytest.raises(ValueError, match="missing required 'condition_value'"):
+                parser.parse_config(str(config_file))
+
+    def test_condition_type_missing_list_validation(self, temp_dir):
+        """Test validation of missing required condition_list."""
+        parser = ConfigParser()
+        
+        for condition_type in ['in_list', 'not_in_list']:
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': condition_type,
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                                # Missing condition_list
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            config_file = temp_dir / f"missing_list_{condition_type}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should raise ValueError
+            with pytest.raises(ValueError, match="missing required 'condition_list'"):
+                parser.parse_config(str(config_file))
+
+    def test_condition_type_no_value_validation(self, temp_dir):
+        """Test validation that is_null/is_not_null shouldn't have condition_value."""
+        parser = ConfigParser()
+        
+        for condition_type in ['is_null', 'is_not_null']:
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': condition_type,
+                                'condition_value': 'should_not_have_this',  # Should not have this
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            config_file = temp_dir / f"no_value_{condition_type}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should raise ValueError
+            with pytest.raises(ValueError, match="should not have 'condition_value'"):
+                parser.parse_config(str(config_file))
+
+    def test_invalid_regex_pattern_validation(self, temp_dir):
+        """Test validation of invalid regex patterns."""
+        parser = ConfigParser()
+        
+        for condition_type in ['regex_match', 'regex_not_match']:
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': condition_type,
+                                'condition_value': '[invalid_regex(',  # Invalid regex
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            config_file = temp_dir / f"invalid_regex_{condition_type}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should raise ValueError
+            with pytest.raises(ValueError, match="Invalid regex pattern"):
+                parser.parse_config(str(config_file))
+
+    def test_invalid_condition_type_validation(self, temp_dir):
+        """Test validation of invalid condition types."""
+        parser = ConfigParser()
+        
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'condition_field'
+                    },
+                    {
+                        'name': 'mapped_field',
+                        'conditional_mapping': {
+                            'condition_field': 'condition_field',
+                            'condition_type': 'invalid_type',  # Invalid condition type
+                            'mappings': {
+                                'default': {'A': 'Active'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "invalid_condition_type.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(config, f)
+        
+        # Should raise SchemaError
+        with pytest.raises(SchemaError):
+            parser.parse_config(str(config_file))
+
+    def test_condition_list_validation_success(self, temp_dir):
+        """Test successful validation of condition_list parameter."""
+        parser = ConfigParser()
+        
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'condition_field'
+                    },
+                    {
+                        'name': 'mapped_field',
+                        'conditional_mapping': {
+                            'condition_field': 'condition_field',
+                            'condition_type': 'in_list',
+                            'condition_list': ['PREM001', 'VIP123', 'GOLD999'],
+                            'mappings': {
+                                'default': {'STANDARD': 'PRIORITY'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "condition_list_valid.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result
+        
+        # Verify condition_list is properly parsed
+        conditional_mapping = result['reconciliation']['fields'][1]['conditional_mapping']
+        assert conditional_mapping['condition_list'] == ['PREM001', 'VIP123', 'GOLD999']
+
+    def test_regex_pattern_validation_success(self, temp_dir):
+        """Test successful validation of valid regex patterns."""
+        parser = ConfigParser()
+        
+        valid_patterns = [
+            '^[0-9]{6}[A-Z]{2}$',  # 6 digits + 2 letters
+            '.*DARK.*',  # Contains DARK
+            'TRD[0-9]+',  # TRD followed by digits
+            '^[A-Z]{3}/[A-Z]{3}$'  # Currency pairs
+        ]
+        
+        for i, pattern in enumerate(valid_patterns):
+            config = {
+                'reconciliation': {
+                    'keys': ['id'],
+                    'fields': [
+                        {
+                            'name': 'condition_field'
+                        },
+                        {
+                            'name': 'mapped_field',
+                            'conditional_mapping': {
+                                'condition_field': 'condition_field',
+                                'condition_type': 'regex_match',
+                                'condition_value': pattern,
+                                'mappings': {
+                                    'default': {'A': 'Active'}
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+            
+            config_file = temp_dir / f"valid_regex_{i}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f)
+            
+            # Should parse successfully
+            result = parser.parse_config(str(config_file))
+            assert 'reconciliation' in result
