@@ -153,28 +153,8 @@ class ExcelGenerator(LoggerMixin):
             ws[f'B{row}'] = value
             ws[f'A{row}'].font = self.fonts['summary_header']
         
-        # Statistics section
-        stats_start_row = start_row + len(metadata_data) + 2
-        ws[f'A{stats_start_row}'] = 'Reconciliation Statistics'
-        ws[f'A{stats_start_row}'].font = self.fonts['title']
-        
-        stats_data = [
-            ['Total Source Records', stats['total_source']],
-            ['Total Target Records', stats['total_target']],
-            ['Matched Records', stats['matched']],
-            ['Different Records', stats['different']],
-            ['Missing in Source', stats['missing_in_source']],
-            ['Missing in Target', stats['missing_in_target']]
-        ]
-        
-        for i, (label, value) in enumerate(stats_data):
-            row = stats_start_row + 2 + i
-            ws[f'A{row}'] = label
-            ws[f'B{row}'] = value
-            ws[f'A{row}'].font = self.fonts['summary_header']
-        
-        # Configuration section
-        config_start_row = stats_start_row + len(stats_data) + 4
+        # Configuration section (moved above statistics)
+        config_start_row = start_row + len(metadata_data) + 2
         ws[f'A{config_start_row}'] = 'Reconciliation Configuration'
         ws[f'A{config_start_row}'].font = self.fonts['title']
         
@@ -206,9 +186,30 @@ class ExcelGenerator(LoggerMixin):
         ws[f'A{fields_row}'] = 'Configured Fields'
         ws[f'B{fields_row}'] = ', '.join(ordered_fields) if ordered_fields else 'N/A'
         ws[f'A{fields_row}'].font = self.fonts['summary_header']
+        
+        # Statistics section (moved below configuration)
+        stats_start_row = fields_row + 3
+        ws[f'A{stats_start_row}'] = 'Reconciliation Statistics'
+        ws[f'A{stats_start_row}'].font = self.fonts['title']
+        
+        stats_data = [
+            ['Total Source Records', stats['total_source']],
+            ['Total Target Records', stats['total_target']],
+            ['Matched Records', stats['matched']],
+            ['Different Records', stats['different']],
+            ['Missing in Source', stats['missing_in_source']],
+            ['Missing in Target', stats['missing_in_target']]
+        ]
+        
+        for i, (label, value) in enumerate(stats_data):
+            row = stats_start_row + 2 + i
+            ws[f'A{row}'] = label
+            ws[f'B{row}'] = value
+            ws[f'A{row}'].font = self.fonts['summary_header']
+        
           # Field statistics section if available
         if 'field_statistics' in stats and stats['field_statistics']:
-            field_stats_start = config_start_row + 5  # Adjusted for new configuration section
+            field_stats_start = stats_start_row + len(stats_data) + 3  # Adjusted for new layout
             ws[f'A{field_stats_start}'] = 'Field Statistics'
             ws[f'A{field_stats_start}'].font = self.fonts['title']
             
