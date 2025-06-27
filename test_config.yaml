@@ -1,0 +1,12 @@
+reconciliation:
+  keys: [trade_id]
+  fields:
+    - name: status
+      mapping:
+        "Active": "A"
+        "Pending": "P"
+        "Cancelled": "C"
+    - name: amount
+      tolerance: 0.01
+    - name: description
+    - name: account_id

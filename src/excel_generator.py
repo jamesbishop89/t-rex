@@ -671,7 +671,7 @@ class ExcelGenerator(LoggerMixin):
             if not transformations:
                 return
             
-            # Get column mapping for display
+            # Get column mapping for display - handle renamed columns
             column_positions = {col: idx + 1 for idx, col in enumerate(display_df.columns)}
             
             # Process transformations for both source and target
@@ -680,60 +680,77 @@ class ExcelGenerator(LoggerMixin):
                     continue
                     
                 for field_name, field_transformations in transformations[dataset_type].items():
-                    # Find source and target column names in display
-                    source_col_name = f'source_{field_name}'
-                    target_col_name = f'target_{field_name}'
+                    # Find column names in the display DataFrame
+                    # The columns have been renamed to "Source: field_name" and "Target: field_name" format
+                    if dataset_type == 'source':
+                        possible_col_names = [
+                            f'Source: {field_name}',
+                            f'Source: {field_name} (ignored)',
+                            f'source_{field_name}'  # Fallback for original format
+                        ]
+                    else:  # target
+                        possible_col_names = [
+                            f'Target: {field_name}',
+                            f'Target: {field_name} (ignored)',
+                            f'target_{field_name}'  # Fallback for original format
+                        ]
                     
-                    # Add comments to appropriate columns
-                    for col_name in [source_col_name, target_col_name]:
+                    # Find the actual column name that exists
+                    target_col_name = None
+                    for col_name in possible_col_names:
                         if col_name in column_positions:
-                            col_idx = column_positions[col_name]
+                            target_col_name = col_name
+                            break
+                    
+                    if target_col_name:
+                        col_idx = column_positions[target_col_name]
+                        
+                        # Group transformations by row
+                        row_transformations = {}
+                        for transformation in field_transformations:
+                            row_idx = transformation['row_index']
+                            if row_idx not in row_transformations:
+                                row_transformations[row_idx] = []
+                            row_transformations[row_idx].append(transformation)
+                        
+                        # Add comments to cells
+                        for row_idx, transforms in row_transformations.items():
+                            excel_row = row_idx + 2  # +1 for header, +1 for 1-based indexing
                             
-                            # Group transformations by row
-                            row_transformations = {}
-                            for transformation in field_transformations:
-                                row_idx = transformation['row_index']
-                                if row_idx not in row_transformations:
-                                    row_transformations[row_idx] = []
-                                row_transformations[row_idx].append(transformation)
+                            # Build comment text
+                            comment_lines = ["🔄 Data Transformation Applied:"]
+                            for transform in transforms:
+                                if transform['transformation_type'] == 'mapping':
+                                    # For mappings, only show the mapping rule
+                                    comment_lines.append(f"• Mapping: {transform.get('mapping_rule', 'N/A')}")
+                                elif transform['transformation_type'] == 'transformation':
+                                    comment_lines.append(f"• Formula: {transform.get('transformation_rule', 'N/A')}")
+                                    comment_lines.append(f"• Before: {transform['original_value']}")
+                                    comment_lines.append(f"• After: {transform['new_value']}")
+                                elif transform['transformation_type'] == 'conditional':
+                                    comment_lines.append(f"• Conditional: {transform.get('condition_desc', 'N/A')}")
+                                    comment_lines.append(f"• Before: {transform['original_value']}")
+                                    comment_lines.append(f"• After: {transform['new_value']}")
                             
-                            # Add comments to cells
-                            for row_idx, transforms in row_transformations.items():
-                                excel_row = row_idx + 2  # +1 for header, +1 for 1-based indexing
-                                
-                                # Build comment text
-                                comment_lines = ["🔄 Data Transformation Applied:"]
-                                for transform in transforms:
-                                    if transform['transformation_type'] == 'mapping':
-                                        comment_lines.append(f"• Mapping: {transform['mapping_rule']}")
-                                    elif transform['transformation_type'] == 'transformation':
-                                        comment_lines.append(f"• Formula: {transform['transformation_rule']}")
-                                        comment_lines.append(f"• Before: {transform['original_value']}")
-                                        comment_lines.append(f"• After: {transform['new_value']}")
-                                    elif transform['transformation_type'] == 'conditional':
-                                        comment_lines.append(f"• Conditional: {transform.get('condition_desc', 'N/A')}")
-                                        comment_lines.append(f"• Before: {transform['original_value']}")
-                                        comment_lines.append(f"• After: {transform['new_value']}")
-                                
-                                comment_text = "\n".join(comment_lines)
-                                
-                                # Create and add comment
-                                cell = ws.cell(row=excel_row, column=col_idx)
-                                comment = Comment(comment_text, author="T-Rex Reconciliation")
-                                comment.width = 300
-                                comment.height = 150
-                                cell.comment = comment
-                                
-                                # Add a small indicator to show the cell has a transformation
-                                if cell.value is not None:
-                                    current_font = cell.font or self.fonts['normal']
-                                    cell.font = Font(
-                                        name=current_font.name,
-                                        size=current_font.size,
-                                        bold=current_font.bold,
-                                        italic=True,  # Make italic to indicate transformation
-                                        color=current_font.color
-                                    )
-                                
+                            comment_text = "\n".join(comment_lines)
+                            
+                            # Create and add comment
+                            cell = ws.cell(row=excel_row, column=col_idx)
+                            comment = Comment(comment_text, author="T-Rex Reconciliation")
+                            comment.width = 300
+                            comment.height = 150
+                            cell.comment = comment
+                            
+                            # Add a small indicator to show the cell has a transformation
+                            if cell.value is not None:
+                                current_font = cell.font or self.fonts['normal']
+                                cell.font = Font(
+                                    name=current_font.name,
+                                    size=current_font.size,
+                                    bold=current_font.bold,
+                                    italic=True,  # Make italic to indicate transformation
+                                    color=current_font.color
+                                )
+                            
         except Exception as e:
             self.logger.warning(f"Failed to add transformation comments: {e}")
