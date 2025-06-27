@@ -393,3 +393,148 @@ class TestReconciliationEngine:
         # Records should match despite different notes (ignored field)
         assert len(results['records']['matched']) == 2
         assert len(results['records']['different']) == 0
+
+    def test_conditional_mapping(self):
+        """Test conditional mapping functionality."""
+        # Create test configuration with conditional mapping
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'type',
+                            'mappings': {
+                                'EQUITY': {
+                                    'N': 'New',
+                                    'F': 'Filled',
+                                    'C': 'Cancelled'
+                                },
+                                'BOND': {
+                                    'N': 'New Order',
+                                    'F': 'Complete',
+                                    'C': 'Void'
+                                }
+                            }
+                        }
+                    },
+                    {
+                        'name': 'type'  # Condition field must also be configured
+                    }
+                ]
+            }
+        }
+        
+        # Create test data
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3, 4],
+            'type': ['EQUITY', 'EQUITY', 'BOND', 'BOND'],
+            'status': ['N', 'F', 'N', 'C']
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3, 4],
+            'type': ['EQUITY', 'EQUITY', 'BOND', 'BOND'],
+            'status': ['New', 'Filled', 'New Order', 'Void']
+        })
+        
+        # Run reconciliation
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        # All records should match after conditional mapping
+        assert results['statistics']['matched'] == 4
+        assert results['statistics']['different'] == 0
+        
+        # Check that the mapping was applied correctly in the processed data
+        matched_records = results['records']['matched']
+        assert len(matched_records) == 4
+        
+        # Verify source values were mapped correctly
+        source_status_values = matched_records['source_status'].tolist()
+        expected_mapped_values = ['New', 'Filled', 'New Order', 'Void']
+        assert source_status_values == expected_mapped_values
+
+    def test_conditional_mapping_with_partial_matches(self):
+        """Test conditional mapping where some values don't match conditions."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'type',
+                            'mappings': {
+                                'EQUITY': {
+                                    'N': 'New',
+                                    'F': 'Filled'
+                                }
+                                # No mapping for BOND type
+                            }
+                        }
+                    },
+                    {
+                        'name': 'type'
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'type': ['EQUITY', 'BOND', 'EQUITY'],
+            'status': ['N', 'X', 'F']  # 'X' for BOND type has no mapping
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1, 2, 3],
+            'type': ['EQUITY', 'BOND', 'EQUITY'],
+            'status': ['New', 'X', 'Filled']
+        })
+        
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+        
+        # Should have matches where mapping applied and original values for unmapped
+        assert results['statistics']['matched'] == 3
+        assert results['statistics']['different'] == 0
+
+    def test_conditional_mapping_missing_condition_field(self):
+        """Test conditional mapping when condition field is missing from data."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'missing_field',
+                            'mappings': {
+                                'EQUITY': {'N': 'New'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        source_data = pd.DataFrame({
+            'id': [1],
+            'status': ['N']
+            # missing_field is not present
+        })
+        
+        target_data = pd.DataFrame({
+            'id': [1],
+            'status': ['N']
+        })
+        
+        engine = ReconciliationEngine(config)
+        
+        # Should handle missing condition field gracefully
+        results = engine.reconcile(source_data, target_data)
+        
+        # Should still work, just without applying conditional mapping
+        assert results['statistics']['matched'] == 1

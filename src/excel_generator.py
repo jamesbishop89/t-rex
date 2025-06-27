@@ -50,19 +50,19 @@ class ExcelGenerator(LoggerMixin):
             'header_fill': PatternFill(start_color='366092', end_color='366092', fill_type='solid'),
             'difference_fill': PatternFill(start_color='FFE6E6', end_color='FFE6E6', fill_type='solid'),
             'summary_header': PatternFill(start_color='D9E2F3', end_color='D9E2F3', fill_type='solid'),
-            'match_rate_perfect': PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid'),  # Light green
-            'match_rate_imperfect': PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid')  # Light red
+            'match_rate_perfect': PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid'),
+            'match_rate_imperfect': PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
         }
         
         # Fonts
         self.fonts = {
             'header': Font(name='Calibri', size=11, bold=True, color='FFFFFF'),
-            'difference': Font(name='Calibri', size=10, bold=True, color='CC0000'),
-            'normal': Font(name='Calibri', size=10),
+            'difference': Font(name='Calibri', size=11, bold=True, color='CC0000'),
+            'normal': Font(name='Calibri', size=11),
             'summary_header': Font(name='Calibri', size=11, bold=True),
             'title': Font(name='Calibri', size=14, bold=True),
-            'match_rate_perfect': Font(name='Calibri', size=10, bold=True, color='006400'),  # Dark green
-            'match_rate_imperfect': Font(name='Calibri', size=10, bold=True, color='DC143C')  # Dark red
+            'match_rate_perfect': Font(name='Calibri', size=11, bold=True, color='006100'),
+            'match_rate_imperfect': Font(name='Calibri', size=11, bold=True, color='9C0006')
         }
         
         # Alignments
@@ -439,6 +439,7 @@ class ExcelGenerator(LoggerMixin):
     def _highlight_differences(self, ws, different_df: pd.DataFrame, results: Dict[str, Any]) -> None:
         """
         Highlight cells with differences in the Different sheet.
+        Only highlights cells for fields that actually differ in each specific row.
         
         Args:
             ws: Excel worksheet
@@ -455,29 +456,31 @@ class ExcelGenerator(LoggerMixin):
             # Get column mapping
             display_df = self._prepare_comparison_dataframe(different_df, config)
             
-            for field_name, comparison_result in field_comparison.items():
-                source_col_name = f"Source: {field_name}"
-                target_col_name = f"Target: {field_name}"
+            # For each row in different_df, determine which specific fields differ
+            for diff_row_idx in range(len(different_df)):
+                excel_row = diff_row_idx + 2  # +2 for header and 0-based index
                 
-                if source_col_name not in display_df.columns or target_col_name not in display_df.columns:
-                    continue
-                
-                # Find column indices
-                source_col_idx = list(display_df.columns).index(source_col_name) + 1
-                target_col_idx = list(display_df.columns).index(target_col_name) + 1
-                
-                # For each row in different_df, check if this field has a difference and highlight it
-                for diff_row_idx in range(len(different_df)):
-                    excel_row = diff_row_idx + 2  # +2 for header and 0-based index
+                # Check each field to see if it differs in this specific row
+                for field_name, comparison_result in field_comparison.items():
+                    source_col_name = f"Source: {field_name}"
+                    target_col_name = f"Target: {field_name}"
                     
-                    # Get the actual values for this row to determine if they're different
+                    if source_col_name not in display_df.columns or target_col_name not in display_df.columns:
+                        continue
+                    
+                    # Get the actual values for this row and field
                     source_value = different_df.iloc[diff_row_idx][f'source_{field_name}'] if f'source_{field_name}' in different_df.columns else None
                     target_value = different_df.iloc[diff_row_idx][f'target_{field_name}'] if f'target_{field_name}' in different_df.columns else None
                     
-                    # Check if values are different - handle null/blank comparisons properly
+                    # Check if values are different for this specific row and field
                     values_are_different = self._values_are_different(source_value, target_value)
                     
+                    # Only highlight if this specific field differs in this specific row
                     if values_are_different:
+                        # Find column indices
+                        source_col_idx = list(display_df.columns).index(source_col_name) + 1
+                        target_col_idx = list(display_df.columns).index(target_col_name) + 1
+                        
                         # Highlight source cell
                         source_cell = ws.cell(row=excel_row, column=source_col_idx)
                         source_cell.fill = self.colors['difference_fill']

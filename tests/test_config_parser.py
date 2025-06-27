@@ -220,3 +220,132 @@ class TestConfigParser:
         # Valid lambda that fails execution
         with pytest.raises(ValueError, match="Lambda function validation failed"):
             parser.validate_lambda_function("lambda x: x.invalid_method()", "test")
+    
+    def test_conditional_mapping_validation(self, temp_dir):
+        """Test validation of conditional mapping configuration."""
+        parser = ConfigParser()
+        
+        # Valid conditional mapping config
+        valid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'type',
+                            'mappings': {
+                                'EQUITY': {'N': 'New', 'F': 'Filled'},
+                                'BOND': {'N': 'New Order', 'F': 'Complete'}
+                            }
+                        }
+                    },
+                    {
+                        'name': 'type'
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "valid_conditional.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(valid_config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result
+    
+    def test_conditional_mapping_invalid_condition_field(self, temp_dir):
+        """Test validation when conditional mapping references non-existent field."""
+        parser = ConfigParser()
+        
+        # Invalid config - condition_field doesn't exist in fields or keys
+        invalid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'nonexistent_field',
+                            'mappings': {
+                                'VALUE1': {'old': 'new'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "invalid_conditional.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(invalid_config, f)
+        
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="references non-existent condition field"):
+            parser.parse_config(str(config_file))
+    
+    def test_conditional_mapping_with_regular_mapping(self, temp_dir):
+        """Test validation when field has both regular and conditional mapping."""
+        parser = ConfigParser()
+        
+        # Invalid config - field has both mapping and conditional_mapping
+        invalid_config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'mapping': {'N': 'New'},
+                        'conditional_mapping': {
+                            'condition_field': 'type',
+                            'mappings': {
+                                'EQUITY': {'N': 'New'}
+                            }
+                        }
+                    },
+                    {
+                        'name': 'type'
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "both_mappings.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(invalid_config, f)
+        
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="cannot have both 'mapping' and 'conditional_mapping'"):
+            parser.parse_config(str(config_file))
+    
+    def test_conditional_mapping_with_key_as_condition(self, temp_dir):
+        """Test conditional mapping where condition field is a reconciliation key."""
+        parser = ConfigParser()
+        
+        # Valid config - condition_field is one of the keys
+        valid_config = {
+            'reconciliation': {
+                'keys': ['id', 'type'],
+                'fields': [
+                    {
+                        'name': 'status',
+                        'conditional_mapping': {
+                            'condition_field': 'type',  # This is a key
+                            'mappings': {
+                                'EQUITY': {'N': 'New'},
+                                'BOND': {'N': 'New Order'}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        config_file = temp_dir / "conditional_with_key.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(valid_config, f)
+        
+        # Should parse successfully
+        result = parser.parse_config(str(config_file))
+        assert 'reconciliation' in result

@@ -43,6 +43,10 @@ class ConfigParser(LoggerMixin):
         field_schema = Schema({
             'name': And(str, len),  # Field name must be non-empty string
             SchemaOptional('mapping'): dict,  # Optional mapping dictionary
+            SchemaOptional('conditional_mapping'): {  # New: conditional mapping based on another field
+                'condition_field': And(str, len),  # Field name to check condition against
+                'mappings': dict  # Dictionary where keys are condition values, values are mapping dicts
+            },
             SchemaOptional('transformation'): And(str, self._validate_lambda),  # Optional lambda string
             SchemaOptional('tolerance'): Or(
                 And(float, lambda x: x >= 0),  # Positive float for absolute tolerance
@@ -152,6 +156,7 @@ class ConfigParser(LoggerMixin):
             # Additional validation
             self._validate_field_names(validated_config)
             self._validate_reconciliation_keys(validated_config)
+            self._validate_conditional_mappings(validated_config)
             
             self.logger.info(f"Configuration validated successfully")
             self.logger.info(f"Reconciliation keys: {validated_config['reconciliation']['keys']}")
@@ -309,3 +314,40 @@ class ConfigParser(LoggerMixin):
         timestamped_filename = f"{base_filename}_{timestamp}.xlsx"
         
         return timestamped_filename
+    
+    def _validate_conditional_mappings(self, config: Dict[str, Any]) -> None:
+        """
+        Validate conditional mappings reference existing fields.
+        
+        Args:
+            config: Parsed configuration dictionary
+            
+        Raises:
+            ValueError: If conditional mapping references non-existent field
+        """
+        fields = config['reconciliation']['fields']
+        field_names = [field['name'] for field in fields]
+        keys = config['reconciliation']['keys']
+        all_available_fields = set(field_names + keys)
+        
+        for field in fields:
+            if 'conditional_mapping' in field:
+                condition_field = field['conditional_mapping']['condition_field']
+                
+                # Check if condition field exists in the configuration
+                if condition_field not in all_available_fields:
+                    raise ValueError(
+                        f"Conditional mapping for field '{field['name']}' references "
+                        f"non-existent condition field '{condition_field}'. "
+                        f"Available fields: {sorted(all_available_fields)}"
+                    )
+                
+                # Validate that both regular mapping and conditional mapping are not used together
+                if 'mapping' in field:
+                    raise ValueError(
+                        f"Field '{field['name']}' cannot have both 'mapping' and 'conditional_mapping'. "
+                        f"Please use only one mapping type."
+                    )
+                
+                self.logger.debug(f"Validated conditional mapping for field '{field['name']}' "
+                                f"based on condition field '{condition_field}'")

@@ -1,0 +1,7 @@
+trade_id,account_id,asset_class,trade_status_conditional,market_code,settlement_currency,settlement_instruction,execution_price
+1,ACC001,EQ,N,US,USD,DVP,100.50
+2,ACC002,EQ,F,EU,EUR,FOP,250.75
+3,ACC003,FI,N,US,USD,DVP,1000.00
+4,ACC004,FI,F,ASIA,JPY,REPO,500.25
+5,ACC005,DV,PF,EU,EUR,CASH,75.00
+6,ACC006,EQ,C,US,USD,HOLD,150.00

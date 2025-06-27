@@ -7,8 +7,8 @@ echo "=============================="
 # Basic reconciliation
 echo "Running basic reconciliation..."
 python t-rex.py \
-    --source examples/source_data.csv \
-    --target examples/target_data.csv \
+    --source examples/sample_source.csv \
+    --target examples/sample_target.csv \
     --config examples/config.yaml \
     --output examples/basic_reconciliation_results.xlsx
 

@@ -20,7 +20,7 @@ reconciliation:
       
     # EXAMPLE 2: Share quantity with ABSOLUTE tolerance
     - name: quantity
-      tolerance: 1  # Allow difference of 1 share
+      tolerance: 1.0  # Allow difference of 1 share
       
     # EXAMPLE 3: Commission rate with SMALL percentage tolerance
     - name: commission_rate
@@ -101,6 +101,91 @@ reconciliation:
     - name: pnl_percentage
       transformation: "lambda x: float(x.replace('%', '')) / 100 if '%' in str(x) else float(x)"
       tolerance: "1%"
+      
+    # CONDITION FIELDS FOR CONDITIONAL MAPPING
+    # ========================================
+    # These fields are used as conditions for conditional mappings below
+    - name: market_code
+    - name: trade_type
+    
+    # CONDITIONAL MAPPING EXAMPLES
+    # ============================
+    # Conditional mappings apply different value mappings based on another field's value
+    # This is useful when the same field has different meaning or formats in different contexts
+    
+    # EXAMPLE 15: Trade status mapping based on trade type
+    # Different trade types use different status codes
+    - name: trade_status_conditional
+      conditional_mapping:
+        condition_field: asset_class  # Base the mapping on asset class
+        mappings:
+          # For equity trades, use these status mappings
+          "EQ":
+            "N": "New"
+            "PF": "Partially Filled"
+            "F": "Filled"
+            "C": "Cancelled"
+            "R": "Rejected"
+          # For fixed income trades, use different status mappings
+          "FI":
+            "N": "New Order"
+            "PF": "Partial Fill"
+            "F": "Complete"
+            "C": "Void"
+            "R": "Declined"
+          # For derivatives, use yet another set of mappings
+          "DV":
+            "N": "Pending"
+            "PF": "Executing"
+            "F": "Executed"
+            "C": "Expired"
+            "R": "Failed"
+    
+    # EXAMPLE 16: Currency formatting based on market
+    # Different markets format currency amounts differently
+    - name: settlement_currency
+      conditional_mapping:
+        condition_field: market_code
+        mappings:
+          # US market uses standard USD codes
+          "US":
+            "USD": "US Dollar"
+            "EUR": "Euro"
+            "GBP": "Pound Sterling"
+            "CAD": "Canadian Dollar"
+          # European market uses different conventions
+          "EU":
+            "USD": "US-Dollar"
+            "EUR": "European Euro"
+            "GBP": "British Pound"
+            "CHF": "Swiss Franc"
+          # Asian market uses local conventions
+          "ASIA":
+            "USD": "US_Dollar"
+            "EUR": "Euro_Currency"
+            "JPY": "Japanese Yen"
+            "HKD": "Hong Kong Dollar"
+    
+    # EXAMPLE 17: Settlement instructions based on asset class and market
+    - name: settlement_instruction
+      conditional_mapping:
+        condition_field: asset_class
+        mappings:
+          "EQ":  # Equity settlements
+            "DVP": "Delivery vs Payment"
+            "FOP": "Free of Payment"
+            "HOLD": "Hold in Account"
+            "AUTO": "Auto Settlement"
+          "FI":  # Fixed Income settlements
+            "DVP": "Bond Settlement DVP"
+            "FOP": "Bond Settlement FOP"
+            "REPO": "Repurchase Agreement"
+            "ROLL": "Rollover Settlement"
+          "DV":  # Derivatives settlements
+            "CASH": "Cash Settlement"
+            "PHYS": "Physical Delivery"
+            "NET": "Net Settlement"
+            "CLOSE": "Close Out"
 
 # OUTPUT CONFIGURATION
 # ===================

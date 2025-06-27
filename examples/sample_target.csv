@@ -1,0 +1,7 @@
+trade_id,account_id,asset_class,trade_status_conditional,market_code,settlement_currency,settlement_instruction,execution_price
+1,ACC001,EQ,New,US,US Dollar,Delivery vs Payment,100.50
+2,ACC002,EQ,Filled,EU,European Euro,Free of Payment,250.75
+3,ACC003,FI,New Order,US,US Dollar,Bond Settlement DVP,1000.00
+4,ACC004,FI,Complete,ASIA,Japanese Yen,Repurchase Agreement,500.25
+5,ACC005,DV,Executing,EU,European Euro,Cash Settlement,75.00
+6,ACC006,EQ,Cancelled,US,US Dollar,Hold in Account,150.00

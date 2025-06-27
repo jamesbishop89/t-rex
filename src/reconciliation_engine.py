@@ -157,6 +157,8 @@ class ReconciliationEngine(LoggerMixin):
             # Apply mapping first
             if 'mapping' in field_config:
                 df = self._apply_mapping(df, field_name, field_config['mapping'], dataset_type)
+            elif 'conditional_mapping' in field_config:
+                df = self._apply_conditional_mapping(df, field_name, field_config['conditional_mapping'], dataset_type)
             
             # Apply transformation second
             if 'transformation' in field_config:
@@ -490,3 +492,59 @@ class ReconciliationEngine(LoggerMixin):
                         f"{stats['missing_in_target']} missing in target")
         
         return stats
+
+    def _apply_conditional_mapping(self, df: pd.DataFrame, field_name: str, 
+                                 conditional_mapping: Dict[str, Any], dataset_type: str) -> pd.DataFrame:
+        """
+        Apply conditional value mapping to a field based on another field's value.
+        
+        Args:
+            df: Dataset to modify
+            field_name: Name of field to map
+            conditional_mapping: Dict with 'condition_field' and 'mappings'
+            dataset_type: 'source' or 'target' for logging
+            
+        Returns:
+            pd.DataFrame: Dataset with conditional mapping applied
+        """
+        try:
+            condition_field = conditional_mapping['condition_field']
+            mappings = conditional_mapping['mappings']
+            
+            if condition_field not in df.columns:
+                self.logger.warning(f"Condition field {condition_field} not found in {dataset_type} data")
+                return df
+            
+            original_values = df[field_name].nunique()
+            
+            # Create a copy of the field to modify
+            modified_series = df[field_name].copy()
+            
+            # Apply mappings based on condition field values
+            for condition_value, field_mapping in mappings.items():
+                # Find rows where condition field matches the condition value
+                condition_mask = df[condition_field] == condition_value
+                
+                if condition_mask.any():
+                    # Apply the specific mapping to matching rows
+                    for old_value, new_value in field_mapping.items():
+                        value_mask = df[field_name] == old_value
+                        combined_mask = condition_mask & value_mask
+                        
+                        if combined_mask.any():
+                            modified_series.loc[combined_mask] = new_value
+                            self.logger.debug(f"Applied conditional mapping: {condition_field}={condition_value} "
+                                            f"-> {field_name}: {old_value} -> {new_value} "
+                                            f"({combined_mask.sum()} rows)")
+            
+            # Update the dataframe
+            df[field_name] = modified_series
+            mapped_values = df[field_name].nunique()
+            
+            self.logger.debug(f"Applied conditional mapping to {field_name} in {dataset_type} "
+                            f"based on {condition_field}: {original_values} -> {mapped_values} unique values")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply conditional mapping to {field_name} in {dataset_type}: {e}")
+            
+        return df

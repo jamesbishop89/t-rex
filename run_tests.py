@@ -56,7 +56,7 @@ def main():
         print("Note: flake8 not available")
     
     # Run integration test with example data
-    if not run_command("python t-rex.py --source examples/source_data.csv --target examples/target_data.csv --config examples/config.yaml --output test_output.xlsx", "Integration Test"):
+    if not run_command("python t-rex.py --source examples/sample_source.csv --target examples/sample_target.csv --config examples/config.yaml --output test_output.xlsx", "Integration Test"):
         success = False
     
     print(f"\n{'='*60}")
