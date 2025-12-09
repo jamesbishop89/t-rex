@@ -167,13 +167,38 @@ class ExcelGenerator(LoggerMixin):
         ordered_keys = []
         ordered_fields = []
         
+        # Create mapping for keys to check against source columns
+        key_source_map = {}
+        for k in recon_config['keys']:
+            if isinstance(k, dict):
+                source_col = k.get('source', k['name'])
+                key_source_map[source_col] = k['name']
+            else:
+                key_source_map[k] = k
+                
+        # Create mapping for fields to check against source columns
+        field_source_map = {}
+        for f in recon_config['fields']:
+            source_col = f.get('source', f['name'])
+            field_source_map[source_col] = f['name']
+        
         for col in source_columns:
-            if col in recon_config['keys']:
-                ordered_keys.append(col)
-            # Check if column is in configured fields
-            for field in recon_config['fields']:
-                if field['name'] == col and col not in ordered_fields:
-                    ordered_fields.append(col)
+            if col in key_source_map:
+                ordered_keys.append(key_source_map[col])
+            
+            if col in field_source_map and field_source_map[col] not in ordered_fields:
+                ordered_fields.append(field_source_map[col])
+        
+        # Add any keys/fields that weren't found in source columns (fallback)
+        for k in recon_config['keys']:
+            name = k['name'] if isinstance(k, dict) else k
+            if name not in ordered_keys:
+                ordered_keys.append(name)
+                
+        for f in recon_config['fields']:
+            name = f['name']
+            if name not in ordered_fields:
+                ordered_fields.append(name)
         
         # Display reconciliation keys
         keys_row = config_start_row + 2
@@ -187,8 +212,29 @@ class ExcelGenerator(LoggerMixin):
         ws[f'B{fields_row}'] = ', '.join(ordered_fields) if ordered_fields else 'N/A'
         ws[f'A{fields_row}'].font = self.fonts['summary_header']
         
+        # Display configured filters
+        filters_row = fields_row + 1
+        ws[f'A{filters_row}'] = 'Data Filters'
+        
+        filters_desc = []
+        filters_config = recon_config.get('filters', {})
+        
+        for dataset_type in ['source', 'target']:
+            if dataset_type in filters_config:
+                for f in filters_config[dataset_type]:
+                    desc = f"{dataset_type.title()}: {f['field']} {f['condition']}"
+                    if 'value' in f:
+                        desc += f" '{f['value']}'"
+                    if 'values' in f:
+                        desc += f" {f['values']}"
+                    filters_desc.append(desc)
+                    
+        ws[f'B{filters_row}'] = '\n'.join(filters_desc) if filters_desc else 'None'
+        ws[f'B{filters_row}'].alignment = Alignment(wrap_text=True, vertical='center')
+        ws[f'A{filters_row}'].font = self.fonts['summary_header']
+        
         # Statistics section (moved below configuration)
-        stats_start_row = fields_row + 3
+        stats_start_row = filters_row + 3
         ws[f'A{stats_start_row}'] = 'Reconciliation Statistics'
         ws[f'A{stats_start_row}'].font = self.fonts['title']
         
@@ -333,10 +379,38 @@ class ExcelGenerator(LoggerMixin):
             ws['A1'] = 'No records missing in target'
             return
         
-        # Show only source columns (remove target_ prefix columns)
-        source_columns = [col for col in missing_df.columns if col.startswith('source_')]
-        display_df = missing_df[source_columns].copy()
-        display_df.columns = [col.replace('source_', '') for col in display_df.columns]
+        # Try to use raw data if available (using index tracking)
+        use_raw = False
+        if 'raw_data' in results and 'source' in results['raw_data'] and 'source___index__' in missing_df.columns:
+            try:
+                raw_source = results['raw_data']['source']
+                indices = missing_df['source___index__']
+                display_df = raw_source.loc[indices].copy()
+                use_raw = True
+                self.logger.info("Using raw data for Missing in Target sheet")
+            except Exception as e:
+                self.logger.warning(f"Failed to use raw data for Missing in Target: {e}")
+
+        if not use_raw:
+            # Get configured keys
+            keys = results['config']['reconciliation']['keys']
+            key_names = [k['name'] if isinstance(k, dict) else k for k in keys]
+            
+            # Show keys and source columns (remove source_ prefix columns)
+            source_columns = [col for col in missing_df.columns if col.startswith('source_') and col != 'source___index__']
+            
+            # Combine keys and source columns
+            display_cols = []
+            # Add keys first
+            for key in key_names:
+                if key in missing_df.columns:
+                    display_cols.append(key)
+            
+            # Add source columns
+            display_cols.extend(source_columns)
+            
+            display_df = missing_df[display_cols].copy()
+            display_df.columns = [col.replace('source_', '') for col in display_df.columns]
         
         # Write data to worksheet
         self._write_dataframe_to_sheet(ws, display_df, freeze_headers=True, add_filters=True)
@@ -361,10 +435,38 @@ class ExcelGenerator(LoggerMixin):
             ws['A1'] = 'No records missing in source'
             return
         
-        # Show only target columns (remove target_ prefix columns)
-        target_columns = [col for col in missing_df.columns if col.startswith('target_')]
-        display_df = missing_df[target_columns].copy()
-        display_df.columns = [col.replace('target_', '') for col in display_df.columns]
+        # Try to use raw data if available (using index tracking)
+        use_raw = False
+        if 'raw_data' in results and 'target' in results['raw_data'] and 'target___index__' in missing_df.columns:
+            try:
+                raw_target = results['raw_data']['target']
+                indices = missing_df['target___index__']
+                display_df = raw_target.loc[indices].copy()
+                use_raw = True
+                self.logger.info("Using raw data for Missing in Source sheet")
+            except Exception as e:
+                self.logger.warning(f"Failed to use raw data for Missing in Source: {e}")
+
+        if not use_raw:
+            # Get configured keys
+            keys = results['config']['reconciliation']['keys']
+            key_names = [k['name'] if isinstance(k, dict) else k for k in keys]
+            
+            # Show keys and target columns (remove target_ prefix columns)
+            target_columns = [col for col in missing_df.columns if col.startswith('target_') and col != 'target___index__']
+            
+            # Combine keys and target columns
+            display_cols = []
+            # Add keys first
+            for key in key_names:
+                if key in missing_df.columns:
+                    display_cols.append(key)
+            
+            # Add target columns
+            display_cols.extend(target_columns)
+            
+            display_df = missing_df[display_cols].copy()
+            display_df.columns = [col.replace('target_', '') for col in display_df.columns]
         
         # Write data to worksheet
         self._write_dataframe_to_sheet(ws, display_df, freeze_headers=True, add_filters=True)        
@@ -388,8 +490,11 @@ class ExcelGenerator(LoggerMixin):
         keys = config['reconciliation']['keys']
         fields = config['reconciliation']['fields']
         
+        # Extract key names handling both string and dict formats
+        key_names = [k['name'] if isinstance(k, dict) else k for k in keys]
+        
         # Start with key columns
-        display_columns = keys.copy()
+        display_columns = key_names.copy()
         
         # Add source/target pairs for each configured field (both comparison and ignored)
         for field in fields:
@@ -508,6 +613,7 @@ class ExcelGenerator(LoggerMixin):
             # For each row in different_df, determine which specific fields differ
             for diff_row_idx in range(len(different_df)):
                 excel_row = diff_row_idx + 2  # +2 for header and 0-based index
+                row_index = different_df.index[diff_row_idx]
                 
                 # Check each field to see if it differs in this specific row
                 for field_name, comparison_result in field_comparison.items():
@@ -517,15 +623,19 @@ class ExcelGenerator(LoggerMixin):
                     if source_col_name not in display_df.columns or target_col_name not in display_df.columns:
                         continue
                     
-                    # Get the actual values for this row and field
-                    source_value = different_df.iloc[diff_row_idx][f'source_{field_name}'] if f'source_{field_name}' in different_df.columns else None
-                    target_value = different_df.iloc[diff_row_idx][f'target_{field_name}'] if f'target_{field_name}' in different_df.columns else None
-                    
-                    # Check if values are different for this specific row and field
-                    values_are_different = self._values_are_different(source_value, target_value)
+                    # Determine if this field is a mismatch for this row using engine results
+                    is_mismatch = False
+                    if 'matches' in comparison_result and row_index in comparison_result['matches'].index:
+                        # If it's False in matches, it's a mismatch
+                        is_mismatch = not comparison_result['matches'].loc[row_index]
+                    else:
+                        # Fallback to naive comparison if engine result not found
+                        source_value = different_df.iloc[diff_row_idx][f'source_{field_name}'] if f'source_{field_name}' in different_df.columns else None
+                        target_value = different_df.iloc[diff_row_idx][f'target_{field_name}'] if f'target_{field_name}' in different_df.columns else None
+                        is_mismatch = self._values_are_different(source_value, target_value)
                     
                     # Only highlight if this specific field differs in this specific row
-                    if values_are_different:
+                    if is_mismatch:
                         # Find column indices
                         source_col_idx = list(display_df.columns).index(source_col_name) + 1
                         target_col_idx = list(display_df.columns).index(target_col_name) + 1

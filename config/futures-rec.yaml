@@ -1,0 +1,126 @@
+reconciliation:
+  keys:
+    - name: TRADE_ID
+      source: deal_tracking_num
+      target: FIDNUR_ID
+  fields:
+    - name: PORTFOLIO
+      source: internal_portfolio
+      target: TP_PFOLIO
+      mapping:
+        'Option.Flow.Gva': 'FR_Option Flow'
+        'Strategic.Corbi.Gva': 'ST_MC'
+        'Strategic.Narayan.Gva': 'ST_NG'
+        'Strategic.Valerie.Gva': 'ST_VC'
+        'Strategic.Paul.Gva': 'ST_PM'
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.NCMGMT.Gva': 'ST_NCMGMT'
+        '2 - Strategic.Quant.Gva': 'ST_Quant'
+      apply_to: source
+    - name: COUNTERPART
+      source: external_portfolio
+      target: TP_CNTRP
+      mapping:
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.Futures.Gva': 'ST_MC'
+      apply_to: source
+    - name: TRADE_DATE
+      source: trade_date
+      target: TP_DTETRN
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"  
+    - name: BUY_SELL
+      source: buy_sell
+      target: TP_BUY
+      mapping:
+        'Buy': 'B'
+        'Sell': 'S'
+      apply_to: source
+    - name: CONTRACT
+      source_calculation: "lambda df: df['ticker'].astype(str).str[:2]"
+      target: INSTRUMENT
+      mapping:
+        'GC': 'AU CMX'
+        'PL': 'PT NMX'
+        'SI': 'AG CMX'
+        'PA': 'PD NMX'
+      apply_to: source
+    - name: MATURITY
+      source_calculation: "lambda df: df['ticker'].astype(str).str[-2:]"
+      target: TP_CMCMAT
+      mapping:
+        'V5': 'OCT-25'
+        'X5': 'NOV-25'
+        'Z5': 'DEC-25'
+        'F6': 'JAN-26'
+        'G6': 'FEB-26'
+        'H6': 'MAR-26'
+        'J6': 'APR-26'
+        'K6': 'MAY-26'
+        'M6': 'JUN-26'
+        'N6': 'JUL-26'
+        'Q6': 'AUG-26'
+        'U6': 'SEP-26'
+        'V6': 'OCT-26'
+        'X6': 'NOV-26'
+        'Z6': 'DEC-26'
+        'F7': 'JAN-27'
+        'G7': 'FEB-27'
+        'H7': 'MAR-27'
+        'J7': 'APR-27'
+        'K7': 'MAY-27'
+        'M7': 'JUN-27'
+        'N7': 'JUL-27'
+        'Q7': 'AUG-27'
+        'U7': 'SEP-27'
+        'V7': 'OCT-27'
+        'X7': 'NOV-27'
+        'Z7': 'DEC-27'
+        'F8': 'JAN-28'
+        'G8': 'FEB-28'
+        'H8': 'MAR-28'
+        'J8': 'APR-28'
+        'K8': 'MAY-28'
+        'M8': 'JUN-28'
+        'N8': 'JUL-28'
+        'Q8': 'AUG-28'
+        'U8': 'SEP-28'
+        'V8': 'OCT-28'
+        'X8': 'NOV-28'
+        'Z8': 'DEC-28'
+        'F9': 'JAN-29'
+        'G9': 'FEB-29'
+        'H9': 'MAR-29'
+        'J9': 'APR-29'
+        'K9': 'MAY-29'
+        'M9': 'JUN-29'
+        'N9': 'JUL-29'
+        'Q9': 'AUG-29'
+        'U9': 'SEP-29'
+      apply_to: source
+    - name: LOTS
+      source: mvalue
+      target: TP_IQTYS
+      transformation: "lambda x: int(x)"
+    - name: PRICE
+      source: price
+      target: TP_PRICE
+      transformation: "lambda x: round(float(x), 4)"   
+    - name: EXERCISE
+      source: settlement_type
+      target: TP_CMDDLM
+      mapping:
+        'Cash Settled': 'CSH'
+        'Physical Settlement': 'FYS'
+      apply_to: source    
+  filters:
+    target:
+      - field: CMP_TYPO
+        condition: equals
+        value: 'Future COM'
+      - field: TP_INITSD
+        condition: equals
+        value: 'Y'
+output:
+  filename: "output/futures_rec"

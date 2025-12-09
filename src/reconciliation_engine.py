@@ -11,7 +11,6 @@ import numpy as np
 
 from src.logger_setup import LoggerMixin
 
-
 class ReconciliationEngine(LoggerMixin):
     """
     Core engine for data reconciliation between source and target datasets.
@@ -32,7 +31,20 @@ class ReconciliationEngine(LoggerMixin):
         """
         self.config = config
         self.recon_config = config['reconciliation']
-        self.keys = self.recon_config['keys']
+        
+        # Process keys configuration
+        raw_keys = self.recon_config['keys']
+        self.keys = []
+        self.key_configs = []
+        
+        for key in raw_keys:
+            if isinstance(key, str):
+                self.keys.append(key)
+                self.key_configs.append({'name': key})
+            else:
+                self.keys.append(key['name'])
+                self.key_configs.append(key)
+                
         self.fields = self.recon_config['fields']
           # Create field lookup for efficient access
         self.field_configs = {field['name']: field for field in self.fields}
@@ -50,6 +62,214 @@ class ReconciliationEngine(LoggerMixin):
         self.logger.info(f"Reconciliation engine initialized with {len(self.keys)} keys and {len(self.fields)} fields")
         self.logger.info(f"Fields for comparison: {len(self.comparison_fields)}, ignored fields: {len(self.ignored_fields)}")
     
+    def _evaluate_condition(self, df: pd.DataFrame, field: str, condition: str, 
+                          value: Any = None, values: List[Any] = None) -> pd.Series:
+        """
+        Evaluate a condition on a dataframe field.
+        
+        Args:
+            df: DataFrame to evaluate
+            field: Field name to check
+            condition: Condition type
+            value: Single value for comparison
+            values: List of values for list-based comparisons
+            
+        Returns:
+            pd.Series: Boolean mask indicating rows that satisfy the condition
+        """
+        if field not in df.columns:
+            self.logger.warning(f"Field {field} not found for condition evaluation")
+            return pd.Series(False, index=df.index)
+            
+        series = df[field]
+        
+        # String operations
+        if condition in ['equals', 'not_equals', 'starts_with', 'not_starts_with', 
+                       'ends_with', 'not_ends_with', 'contains', 'not_contains',
+                       'regex_match', 'regex_not_match']:
+            
+            # Handle numeric equality/inequality for numeric columns
+            if condition in ['equals', 'not_equals'] and pd.api.types.is_numeric_dtype(series):
+                try:
+                    num_value = float(value)
+                    if condition == 'equals':
+                        return series == num_value
+                    elif condition == 'not_equals':
+                        return series != num_value
+                except (ValueError, TypeError):
+                    # Fall back to string comparison if value is not numeric
+                    pass
+            
+            str_series = series.astype(str)
+            str_value = str(value) if value is not None else ''
+            
+            if condition == 'equals':
+                return str_series == str_value
+            elif condition == 'not_equals':
+                return str_series != str_value
+            elif condition == 'starts_with':
+                return str_series.str.startswith(str_value, na=False)
+            elif condition == 'not_starts_with':
+                return ~str_series.str.startswith(str_value, na=False)
+            elif condition == 'ends_with':
+                return str_series.str.endswith(str_value, na=False)
+            elif condition == 'not_ends_with':
+                return ~str_series.str.endswith(str_value, na=False)
+            elif condition == 'contains':
+                return str_series.str.contains(str_value, na=False)
+            elif condition == 'not_contains':
+                return ~str_series.str.contains(str_value, na=False)
+            elif condition == 'regex_match':
+                return str_series.str.match(str_value, na=False)
+            elif condition == 'regex_not_match':
+                return ~str_series.str.match(str_value, na=False)
+                
+        # Numeric operations
+        elif condition in ['less_than', 'less_than_equal', 'greater_than', 'greater_than_equal']:
+            try:
+                num_series = pd.to_numeric(series, errors='coerce')
+                num_value = float(value)
+                
+                if condition == 'less_than':
+                    return num_series < num_value
+                elif condition == 'less_than_equal':
+                    return num_series <= num_value
+                elif condition == 'greater_than':
+                    return num_series > num_value
+                elif condition == 'greater_than_equal':
+                    return num_series >= num_value
+            except (ValueError, TypeError):
+                self.logger.warning(f"Numeric comparison failed for field {field}")
+                return pd.Series(False, index=df.index)
+                
+        # List operations
+        elif condition in ['in_list', 'not_in_list'] and values:
+            str_series = series.astype(str)
+            str_values = [str(v) for v in values]
+            
+            if condition == 'in_list':
+                return str_series.isin(str_values)
+            elif condition == 'not_in_list':
+                return ~str_series.isin(str_values)
+                
+        # Null checks
+        elif condition == 'is_null':
+            return series.isna()
+        elif condition == 'is_not_null':
+            return series.notna()
+            
+        return pd.Series(False, index=df.index)
+
+    def _apply_filters(self, df: pd.DataFrame, dataset_type: str) -> pd.DataFrame:
+        """
+        Apply configured filters to the dataset.
+        
+        Args:
+            df: Dataset to filter
+            dataset_type: 'source' or 'target'
+            
+        Returns:
+            pd.DataFrame: Filtered dataset
+        """
+        filters = self.recon_config.get('filters', {}).get(dataset_type, [])
+        
+        if not filters:
+            return df
+            
+        self.logger.info(f"Applying {len(filters)} filters to {dataset_type} data")
+        initial_count = len(df)
+        
+        for filter_config in filters:
+            field = filter_config['field']
+            condition = filter_config['condition']
+            value = filter_config.get('value')
+            values = filter_config.get('values')
+            
+            mask = self._evaluate_condition(df, field, condition, value, values)
+            df = df[mask]
+            
+        final_count = len(df)
+        filtered_count = initial_count - final_count
+        
+        if filtered_count > 0:
+            self.logger.info(f"Filtered {filtered_count} records from {dataset_type} data. "
+                           f"Remaining: {final_count}")
+            
+        return df
+
+    def _normalize_dataset(self, df: pd.DataFrame, dataset_type: str) -> pd.DataFrame:
+        """
+        Rename columns in dataset to match canonical field names based on configuration.
+        
+        Args:
+            df: Dataset to normalize
+            dataset_type: 'source' or 'target'
+            
+        Returns:
+            pd.DataFrame: Dataset with canonical column names
+        """
+        # Create a new dataframe with only the columns we need, renamed correctly
+        new_data = {}
+        
+        # Track which columns from original df are used
+        used_columns = set()
+        
+        # Handle keys
+        for key_config in self.key_configs:
+            canonical_name = key_config['name']
+            # Determine actual column name in the dataset
+            actual_name = key_config.get(dataset_type, canonical_name)
+            
+            if actual_name in df.columns:
+                new_data[canonical_name] = df[actual_name]
+                used_columns.add(actual_name)
+            else:
+                self.logger.warning(f"Key {canonical_name} (mapped to {actual_name}) not found in {dataset_type}")
+
+        # Handle fields
+        for field in self.fields:
+            canonical_name = field['name']
+            
+            # Check for calculations first
+            if dataset_type == 'source' and 'source_calculation' in field:
+                try:
+                    calc_func = eval(field['source_calculation'])
+                    new_data[canonical_name] = calc_func(df)
+                    self.logger.debug(f"Calculated field {canonical_name} for source")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Failed to calculate source field {canonical_name}: {e}")
+                    # Fall through to try standard mapping or empty
+            
+            if dataset_type == 'target' and 'target_calculation' in field:
+                try:
+                    calc_func = eval(field['target_calculation'])
+                    new_data[canonical_name] = calc_func(df)
+                    self.logger.debug(f"Calculated field {canonical_name} for target")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Failed to calculate target field {canonical_name}: {e}")
+                    # Fall through to try standard mapping or empty
+
+            # Determine actual column name in the dataset
+            actual_name = field.get(dataset_type, canonical_name)
+            
+            if actual_name in df.columns:
+                new_data[canonical_name] = df[actual_name]
+                used_columns.add(actual_name)
+            # Note: Missing fields are handled in _preprocess_data (added as NaN)
+            
+        # Create new dataframe
+        new_df = pd.DataFrame(new_data, index=df.index)
+        
+        # Log dropped columns
+        dropped_columns = [col for col in df.columns if col not in used_columns]
+        if dropped_columns:
+            self.logger.info(f"Dropping unconfigured columns from {dataset_type}: {len(dropped_columns)} columns dropped")
+            self.logger.debug(f"Dropped columns: {dropped_columns}")
+            
+        return new_df
+
     def reconcile(self, source_df: pd.DataFrame, target_df: pd.DataFrame) -> Dict[str, Any]:
         """
         Perform complete reconciliation between source and target datasets.
@@ -67,12 +287,28 @@ class ReconciliationEngine(LoggerMixin):
         """
         self.logger.info("Starting reconciliation process")
         
+        # Strip whitespace from column names to ensure robust matching
+        source_df.columns = source_df.columns.str.strip()
+        target_df.columns = target_df.columns.str.strip()
+        
+        # Apply filters first (on raw data)
+        source_df = self._apply_filters(source_df, 'source')
+        target_df = self._apply_filters(target_df, 'target')
+        
+        # Normalize column names based on configuration
+        source_normalized = self._normalize_dataset(source_df, 'source')
+        target_normalized = self._normalize_dataset(target_df, 'target')
+        
         # Validate input data
-        self._validate_input_data(source_df, target_df)
+        self._validate_input_data(source_normalized, target_normalized)
         
         # Preprocess data (apply mappings and transformations)
-        source_processed = self._preprocess_data(source_df.copy(), 'source')
-        target_processed = self._preprocess_data(target_df.copy(), 'target')
+        source_processed = self._preprocess_data(source_normalized.copy(), 'source')
+        target_processed = self._preprocess_data(target_normalized.copy(), 'target')
+        
+        # Add original index to track back to raw data
+        source_processed['__index__'] = source_processed.index
+        target_processed['__index__'] = target_processed.index
         
         # Create merged dataset for comparison
         merged_df = self._merge_datasets(source_processed, target_processed)
@@ -95,7 +331,11 @@ class ReconciliationEngine(LoggerMixin):
             'statistics': statistics,
             'field_comparison': comparison_results,
             'config': self.config,
-            'transformations': self.transformations_applied
+            'transformations': self.transformations_applied,
+            'raw_data': {
+                'source': source_normalized,
+                'target': target_normalized
+            }
         }
     
     def _validate_input_data(self, source_df: pd.DataFrame, target_df: pd.DataFrame) -> None:
@@ -158,8 +398,9 @@ class ReconciliationEngine(LoggerMixin):
             field_name = field_config['name']
             
             if field_name not in df.columns:
-                self.logger.warning(f"Field {field_name} not found in {dataset_type} data")
-                continue
+                self.logger.warning(f"Field {field_name} not found in {dataset_type} data. Adding as empty.")
+                df[field_name] = np.nan
+                # Continue to apply mappings/transformations if they can handle NaN
             
             # Check if we should apply mappings to this dataset
             apply_to = field_config.get('apply_to', 'both')

@@ -1,0 +1,97 @@
+reconciliation:
+  keys:
+    - name: TRADE_ID
+      source: deal_tracking_num
+      target: FIDNUR_ID
+  fields:
+    - name: PORTFOLIO
+      source: internal_portfolio
+      target: TP_PFOLIO
+      mapping:
+        'Option.Flow.Gva': 'FR_Option Flow'
+        'Strategic.Corbi.Gva': 'ST_MC'
+        'Strategic.Narayan.Gva': 'ST_NG'
+        'Strategic.Valerie.Gva': 'ST_VC'
+        'Strategic.Paul.Gva': 'ST_PM'
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.NCMGMT.Gva': 'ST_NCMGMT'
+        '2 - Strategic.Quant.Gva': 'ST_Quant'
+      apply_to: source
+    - name: COUNTERPART
+      source: external_portfolio
+      target: TP_CNTRP
+      mapping:
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.Futures.Gva': 'ST_MC'
+      apply_to: source
+    - name: TRADE_DATE
+      source: trade_date
+      target: TP_DTETRN
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"
+    - name: CONTRACT
+      source: option_contract
+      target: INSTRUMENT
+      transformation: >-
+        lambda x: (lambda r=__import__('re'): next(
+        (v for k, v in {
+        r'^OG\d': 'AU CMX WK FRI',
+        r'^OG[A-Z]': 'AU CMX OPT',
+        r'^G\dM': 'AU CMX WK MON',
+        r'^G\dT': 'AU CMX WK TUE',
+        r'^G\dW': 'AU CMX WK WED',
+        r'^G\d[RH]': 'AU CMX WK THU',
+        r'^G\d[FV]': 'AU CMX WK FRI',
+        r'^SO\d': 'AG CMX WK FRI',
+        r'^SO[A-Z]': 'AG CMX OPT',
+        r'^M\dS': 'AG CMX WK MON',
+        r'^S\dT': 'AG CMX WK TUE',
+        r'^W\dS': 'AG CMX WK WED',
+        r'^[RH]\dS': 'AG CMX WK THU',
+        r'^[FV]\dS': 'AG CMX WK FRI'
+        }.items() if r.match(k, x)),
+        {'PO': 'PT NMX OPT', 'PA': 'PD NMX OPT'}.get(x[:2], x[:2])
+        ))()
+      apply_to: source
+    - name: OPTION_EXPIRY
+      source: option_maturity_date
+      target: TP_DTEEXP
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"
+    - name: UND_FUTURE_EXPIRY
+      source: underlying_future_maturity_dat
+      target: TP_DTEUND
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"      
+    - name: BUY_SELL
+      source: buy_sell
+      target: TP_BUY
+      mapping:
+        'Buy': 'B'
+        'Sell': 'S'
+      apply_to: source
+    - name: CALL_PUT
+      source: put_call
+      target: TP_CP
+      mapping:
+        'Call': 'C'
+        'Put': 'P'
+      apply_to: source
+    - name: LOTS
+      source: mvalue
+      target: TP_LQTY2
+    - name: STRIKE
+      source: strike
+      target: TP_STRIKE
+    - name: PREMIUM
+      source: proceeds
+      target: TP_IPAY
+  filters:
+    target:
+      - field: CMP_TYPO
+        condition: equals
+        value: 'Option on Future COM'
+      - field: TP_INITSD
+        condition: equals
+        value: 'Y'
+output:
+  filename: "output/listedOption_rec"

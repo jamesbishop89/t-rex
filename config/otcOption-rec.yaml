@@ -1,0 +1,98 @@
+reconciliation:
+  keys:
+    - name: TRADE_ID
+      source: deal_tracking_num
+      target: FIDNUR_ID
+  fields:
+    - name: PORTFOLIO
+      source: internal_portfolio
+      target: TP_PFOLIO
+      mapping:
+        'Option.Flow.Gva': 'FR_Option Flow'
+        'Strategic.Corbi.Gva': 'ST_MC'
+        'Strategic.Narayan.Gva': 'ST_NG'
+        'Strategic.Valerie.Gva': 'ST_VC'
+        'Strategic.Paul.Gva': 'ST_PM'
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.NCMGMT.Gva': 'ST_NCMGMT'
+        '2 - Strategic.Quant.Gva': 'ST_Quant'
+      apply_to: source
+    - name: COUNTERPART
+      source: external_portfolio
+      target: TP_CNTRP
+      mapping:
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.Futures.Gva': 'ST_MC'
+      apply_to: source
+    - name: TRADE_DATE
+      source: trade_date
+      target: TP_DTETRN
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"
+    - name: OPTION_EXPIRY
+      source: maturity_date
+      target: TP_DTEEXP
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"
+    - name: CONTRACT
+      source: ticker
+      target: INSTRUMENT      
+    - name: BUY_SELL
+      source: buy_sell
+      target: TP_BUY
+      mapping:
+        'Buy': 'B'
+        'Sell': 'S'
+      apply_to: source
+    - name: CALL_PUT
+      source: put_call
+      target: TP_CP
+      mapping:
+        'Call': 'C'
+        'Put': 'P'
+      apply_to: source
+    - name: STYLE
+      source: option_style
+      target: TP_AE
+      mapping:
+        'American': 'A'
+        'European': 'E'
+      apply_to: source
+    - name: SETTLEMENT_TYPE
+      source: settlement_type
+      target: TP_DVCS
+      mapping:
+        'Physical Settlement': 'D'
+    - name: CURRENCY1
+      source: classification
+      target: TP_FXUND
+    - name: CURRENCY1_AMT
+      source: position
+      target: TP_IQTY
+    - name: CURRENCY2
+      source: currency
+      target: TP_FXBASE
+    - name: CURRENCY2_AMT
+      source_calculation: "lambda df: df['position'] * df['price']"
+      transformation: "lambda x: abs(float(str(x).replace(',', '').strip()))"
+      target: TP_QTYEQ                  
+    - name: STRIKE
+      source: strike
+      target: TP_STRIKE
+    - name: PREMIUM
+      source: proceeds
+      target: TP_IPAY
+    - name: PREMIUM_DATE
+      source: settle_date
+      target: TP_IPAYDTE
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"  
+  filters:
+    target:
+      - field: CMP_TYPO
+        condition: equals
+        value: 'Option on Future COM'
+      - field: TP_INITSD
+        condition: equals
+        value: 'Y'
+output:
+  filename: "output/otcOption_rec"

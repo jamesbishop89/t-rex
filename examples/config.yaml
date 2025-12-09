@@ -7,7 +7,12 @@ reconciliation:
   # ------------
   # Define the key columns used to match trades between source and target systems
   # Can be a single key or multiple keys for composite matching
-  keys: [trade_id, account_id]
+  # Keys can be simple strings or objects with source/target mappings
+  keys: 
+    - trade_id
+    - name: account_id
+      # source: src_account_id
+      # target: tgt_account_id
   
   # FIELDS SECTION
   # --------------

@@ -42,6 +42,8 @@ class ConfigParser(LoggerMixin):
         """        # Schema for individual field configuration
         field_schema = Schema({
             'name': And(str, len),  # Field name must be non-empty string
+            SchemaOptional('source'): And(str, len),  # Source column name if different
+            SchemaOptional('target'): And(str, len),  # Target column name if different
             SchemaOptional('mapping'): dict,  # Optional mapping dictionary
             SchemaOptional('apply_to'): And(str, lambda x: x in ['both', 'source', 'target']),  # Which dataset(s) to apply mapping/transformation to
             SchemaOptional('conditional_mapping'): {  # New: conditional mapping based on another field
@@ -57,17 +59,46 @@ class ConfigParser(LoggerMixin):
                 SchemaOptional('apply_to'): And(str, lambda x: x in ['both', 'source', 'target'])  # Which dataset(s) to apply conditional mapping to
             },
             SchemaOptional('transformation'): And(str, self._validate_lambda),  # Optional lambda string
+            SchemaOptional('source_calculation'): And(str, self._validate_lambda),  # Optional lambda string for source calculation
+            SchemaOptional('target_calculation'): And(str, self._validate_lambda),  # Optional lambda string for target calculation
             SchemaOptional('tolerance'): Or(
                 And(float, lambda x: x >= 0),  # Positive float for absolute tolerance
                 And(str, self._validate_percentage_tolerance)  # Percentage string like "1%"
             ),
             SchemaOptional('ignore'): bool  # Optional flag to ignore field in comparison
         })
-          # Main configuration schema
+
+        # Schema for key configuration (string or dict)
+        key_schema = Or(
+            str,
+            {
+                'name': And(str, len),
+                SchemaOptional('source'): And(str, len),
+                SchemaOptional('target'): And(str, len)
+            }
+        )
+
+        # Schema for dataset filters
+        filter_schema = Schema({
+            'field': And(str, len),
+            'condition': And(str, lambda x: x in [
+                'equals', 'not_equals', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
+                'contains', 'not_contains', 'less_than', 'less_than_equal', 'greater_than', 'greater_than_equal',
+                'in_list', 'not_in_list', 'regex_match', 'regex_not_match', 'is_null', 'is_not_null'
+            ]),
+            SchemaOptional('value'): Or(str, int, float, bool),
+            SchemaOptional('values'): list
+        })
+
+        # Main configuration schema
         self.config_schema = Schema({
             'reconciliation': {
-                'keys': And(list, lambda x: len(x) > 0),  # Must have at least one key
-                'fields': And(list, lambda x: len(x) > 0, [field_schema])  # At least one field
+                'keys': And(list, lambda x: len(x) > 0, [key_schema]),  # Must have at least one key
+                'fields': And(list, lambda x: len(x) > 0, [field_schema]),  # At least one field
+                SchemaOptional('filters'): {
+                    SchemaOptional('source'): [filter_schema],
+                    SchemaOptional('target'): [filter_schema]
+                }
             },
             SchemaOptional('output'): {
                 SchemaOptional('filename'): And(str, len)  # Optional output filename
@@ -216,13 +247,17 @@ class ConfigParser(LoggerMixin):
         """
         keys = config['reconciliation']['keys']
         
-        # Check that all keys are non-empty strings
+        canonical_keys = []
         for key in keys:
-            if not isinstance(key, str) or not key.strip():
-                raise ValueError(f"Reconciliation keys must be non-empty strings: {key}")
+            if isinstance(key, str):
+                if not key.strip():
+                    raise ValueError(f"Reconciliation keys must be non-empty strings: {key}")
+                canonical_keys.append(key)
+            elif isinstance(key, dict):
+                canonical_keys.append(key['name'])
         
         # Check for duplicate keys
-        if len(keys) != len(set(keys)):
+        if len(canonical_keys) != len(set(canonical_keys)):
             raise ValueError(f"Duplicate reconciliation keys found: {keys}")
     
     def get_field_config(self, config: Dict[str, Any], field_name: str) -> Optional[Dict[str, Any]]:
@@ -337,7 +372,15 @@ class ConfigParser(LoggerMixin):
         fields = config['reconciliation']['fields']
         field_names = [field['name'] for field in fields]
         keys = config['reconciliation']['keys']
-        all_available_fields = set(field_names + keys)
+        
+        key_names = []
+        for k in keys:
+            if isinstance(k, str):
+                key_names.append(k)
+            else:
+                key_names.append(k['name'])
+                
+        all_available_fields = set(field_names + key_names)
         
         for field in fields:
             if 'conditional_mapping' in field:

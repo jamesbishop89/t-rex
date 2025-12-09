@@ -1,0 +1,80 @@
+reconciliation:
+  keys:
+    - name: TRADE_ID
+      source: deal_tracking_num
+      target: FIDNUR_ID
+  fields:
+    - name: PORTFOLIO
+      source: internal_portfolio
+      target: TP_PFOLIO
+      mapping:
+        'Option.Flow.Gva': 'FR_Option Flow'
+        'Strategic.Corbi.Gva': 'ST_MC'
+        'Strategic.Narayan.Gva': 'ST_NG'
+        'Strategic.Valerie.Gva': 'ST_VC'
+        'Strategic.Paul.Gva': 'ST_PM'
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.NCMGMT.Gva': 'ST_NCMGMT'
+        '2 - Strategic.Quant.Gva': 'ST_Quant'
+      apply_to: source
+    - name: COUNTERPART
+      source: external_portfolio
+      target: TP_CNTRP
+      ignore: true
+      mapping:
+        'Strategic.MGMT1.Gva': 'ST_MGMT1'
+        'Strategic.MGMT2.Gva': 'ST_MGMT2'
+        'Strategic.Futures.Gva': 'ST_MC'
+      apply_to: source
+    - name: TRADE_DATE
+      source: trade_date
+      target: TP_DTETRN
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"
+    - name: SETTLEMENT_DATE
+      source: settle_date
+      target: TP_DTEEXP
+      transformation: "lambda x: pd.to_datetime(x, dayfirst=True).strftime('%Y-%m-%d')"   
+    - name: BUY_SELL
+      source: buy_sell
+      target: TP_BUY_E
+      mapping:
+        'Buy': 'B'
+        'Sell': 'S'
+      apply_to: source
+    - name: COMMODITY
+      source: currency
+      target: TP_UQTY  
+    - name: QUANTITY
+      source: proceeds
+      target: TP_NOMINAL
+      transformation: "lambda x: abs(float(str(x).replace(',', '').strip()))"
+      apply_to: source
+      tolerance: 0.0
+    - name: UNIT
+      source: unit
+      target: TP_CMLQU0
+      mapping:
+        'Oz': 'OZ.TR'
+    - name: PRICE
+      source: price
+      target: TP_PRICED
+    - name: CURRENCY_AMOUNT
+      source: currency2_amount
+      target_calculation: "lambda df: df['TP_PRICED'] * df['TP_NOMINAL']"
+      transformation: "lambda x: abs(float(str(x).replace(',', '').strip()))"
+      apply_to: source
+      tolerance: 1.0
+    - name: CURRENCY
+      source: currency2
+      target: TP_UQTYEQ
+  filters:
+    target:
+      - field: CMP_TYPO
+        condition: equals
+        value: 'Spot Forward COM'
+      - field: TP_INITSD
+        condition: equals
+        value: 'Y'
+output:
+  filename: "output/pmSpotFwd_rec"

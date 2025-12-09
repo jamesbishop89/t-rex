@@ -103,10 +103,46 @@ class DataLoader(LoggerMixin):
         }
         default_args.update(kwargs)
         
+        # Try to detect separator if not provided
+        if 'sep' not in default_args and 'delimiter' not in default_args:
+            try:
+                import csv
+                with open(file_path, 'r', encoding=default_args.get('encoding', 'utf-8')) as f:
+                    # Read a larger chunk to ensure we get multiple lines even for wide files
+                    sample = f.read(65536)
+                    
+                    try:
+                        sniffer = csv.Sniffer()
+                        # Prefer common separators
+                        dialect = sniffer.sniff(sample, delimiters=',;\t|')
+                        default_args['sep'] = dialect.delimiter
+                        self.logger.debug(f"Detected CSV separator using sniffer: '{dialect.delimiter}'")
+                    except csv.Error:
+                        # Fallback to simple heuristic: count separators in first line
+                        f.seek(0)
+                        first_line = f.readline()
+                        delimiters = [',', ';', '\t', '|']
+                        counts = {d: first_line.count(d) for d in delimiters}
+                        # Get delimiter with max count
+                        if counts:
+                            best_delimiter = max(counts, key=counts.get)
+                            if counts[best_delimiter] > 0:
+                                default_args['sep'] = best_delimiter
+                                self.logger.debug(f"Detected CSV separator using heuristic: '{best_delimiter}'")
+            except Exception as e:
+                self.logger.debug(f"Could not detect CSV separator, using default: {e}")
+        
         try:
             return pd.read_csv(file_path, **default_args)
         except pd.errors.EmptyDataError:
             raise ValueError(f"Data file is empty: {file_path}")
+        except pd.errors.ParserError as e:
+            # If parsing failed and we auto-detected separator, try default
+            if 'sep' in default_args and 'sep' not in kwargs:
+                self.logger.warning(f"Parsing failed with detected separator '{default_args['sep']}', retrying with default")
+                del default_args['sep']
+                return pd.read_csv(file_path, **default_args)
+            raise e
     
     def _load_excel(self, file_path: str, **kwargs) -> pd.DataFrame:
         """

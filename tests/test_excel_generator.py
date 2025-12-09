@@ -410,7 +410,7 @@ class TestExcelGenerator:
         # Find field statistics rows
         perfect_row = None
         imperfect_row = None
-        for row_num in range(1, 30):
+        for row_num in range(1, 50):
             cell_a = ws.cell(row=row_num, column=1)
             if cell_a.value == 'field_perfect':
                 perfect_row = row_num
