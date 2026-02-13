@@ -143,13 +143,13 @@ class ReconciliationEngine(LoggerMixin):
                 return pd.Series(False, index=df.index)
                 
         # List operations
-        elif condition in ['in_list', 'not_in_list'] and values:
+        elif condition in ['in_list', 'not_in_list', 'in', 'not_in'] and values:
             str_series = series.astype(str)
             str_values = [str(v) for v in values]
             
-            if condition == 'in_list':
+            if condition in ['in_list', 'in']:
                 return str_series.isin(str_values)
-            elif condition == 'not_in_list':
+            elif condition in ['not_in_list', 'not_in']:
                 return ~str_series.isin(str_values)
                 
         # Null checks

@@ -84,7 +84,7 @@ class ConfigParser(LoggerMixin):
             'condition': And(str, lambda x: x in [
                 'equals', 'not_equals', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
                 'contains', 'not_contains', 'less_than', 'less_than_equal', 'greater_than', 'greater_than_equal',
-                'in_list', 'not_in_list', 'regex_match', 'regex_not_match', 'is_null', 'is_not_null'
+                'in_list', 'not_in_list', 'in', 'not_in', 'regex_match', 'regex_not_match', 'is_null', 'is_not_null'
             ]),
             SchemaOptional('value'): Or(str, int, float, bool),
             SchemaOptional('values'): list
