@@ -59,6 +59,9 @@ class ReconciliationEngine(LoggerMixin):
             'target': {}   # field_name -> list of transformations
         }
         
+        # Initialize post-merge adjustment tracking
+        self.post_merge_adjustments = {}  # field_name -> list of {index, original_value, new_value}
+        
         self.logger.info(f"Reconciliation engine initialized with {len(self.keys)} keys and {len(self.fields)} fields")
         self.logger.info(f"Fields for comparison: {len(self.comparison_fields)}, ignored fields: {len(self.ignored_fields)}")
     
@@ -197,6 +200,110 @@ class ReconciliationEngine(LoggerMixin):
             
         return df
 
+    def _apply_source_key_calculations(self, source_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply source key calculations to compute the source key from multiple columns.
+        
+        When a key has 'source_key_calculation', evaluate the lambda against the source
+        dataframe to replace the source key column values. This is useful for swaps
+        where the source deal_tracking_num needs to be mapped to match the target key.
+        
+        Args:
+            source_df: Source dataset after filtering
+            
+        Returns:
+            pd.DataFrame: Source dataset with computed key values
+        """
+        for key_config in self.key_configs:
+            calc = key_config.get('source_key_calculation')
+            if not calc:
+                continue
+            
+            source_col = key_config.get('source', key_config['name'])
+            try:
+                calc_func = eval(calc)
+                source_df = source_df.copy()
+                source_df[source_col] = calc_func(source_df)
+                self.logger.info(f"Applied source key calculation for '{source_col}'")
+            except Exception as e:
+                self.logger.error(f"Failed to apply source key calculation for '{source_col}': {e}")
+        
+        return source_df
+
+    def _apply_target_key_calculations(self, target_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply target key calculations to compute the target key from multiple columns.
+        
+        When a key has 'target_key_calculation', evaluate the lambda against the target
+        dataframe to replace the target key column values. This is useful for swaps
+        where the key depends on leg direction (e.g., Buy uses DEAL_NUM_1, Sell uses DEAL_NUM_2).
+        
+        Args:
+            target_df: Target dataset after filtering
+            
+        Returns:
+            pd.DataFrame: Target dataset with computed key values
+        """
+        for key_config in self.key_configs:
+            calc = key_config.get('target_key_calculation')
+            if not calc:
+                continue
+            
+            target_col = key_config.get('target', key_config['name'])
+            try:
+                calc_func = eval(calc)
+                target_df = target_df.copy()
+                target_df[target_col] = calc_func(target_df)
+                self.logger.info(f"Applied target key calculation for '{target_col}'")
+            except Exception as e:
+                self.logger.error(f"Failed to apply target key calculation for '{target_col}': {e}")
+        
+        return target_df
+
+    def _expand_alternative_keys(self, target_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Expand target rows for alternative key columns.
+        
+        When a key has 'target_alternatives', duplicate target rows so that 
+        records can be matched on any of the alternative columns. This is useful
+        for swaps where near leg is in DEAL_NUM_1 and far leg is in DEAL_NUM_2.
+        
+        Args:
+            target_df: Target dataset after filtering
+            
+        Returns:
+            pd.DataFrame: Expanded target dataset
+        """
+        for key_config in self.key_configs:
+            alternatives = key_config.get('target_alternatives', [])
+            if not alternatives:
+                continue
+            
+            primary_target_col = key_config.get('target', key_config['name'])
+            
+            # Collect all key values from the primary column
+            primary_keys = set(target_df[primary_target_col].dropna())
+            
+            frames = [target_df]
+            for alt_col in alternatives:
+                if alt_col in target_df.columns:
+                    # Only create alt rows for values NOT already in primary key set
+                    alt_df = target_df[~target_df[alt_col].isin(primary_keys)].copy()
+                    if len(alt_df) > 0:
+                        alt_df[primary_target_col] = alt_df[alt_col]
+                        frames.append(alt_df)
+                        self.logger.info(f"Expanded target with alternative key '{alt_col}' -> '{primary_target_col}': {len(alt_df)} additional rows")
+                    else:
+                        self.logger.info(f"No new unique keys from alternative column '{alt_col}'")
+                else:
+                    self.logger.warning(f"Alternative key column '{alt_col}' not found in target data")
+            
+            if len(frames) > 1:
+                target_df = pd.concat(frames, ignore_index=True)
+                self.logger.info(f"Target expanded to {len(target_df)} records")
+        
+        return target_df
+
     def _normalize_dataset(self, df: pd.DataFrame, dataset_type: str) -> pd.DataFrame:
         """
         Rename columns in dataset to match canonical field names based on configuration.
@@ -295,6 +402,15 @@ class ReconciliationEngine(LoggerMixin):
         source_df = self._apply_filters(source_df, 'source')
         target_df = self._apply_filters(target_df, 'target')
         
+        # Apply source key calculations (e.g., swap group to FINDUR_ID mapping)
+        source_df = self._apply_source_key_calculations(source_df)
+        
+        # Apply target key calculations (e.g., near/far leg routing)
+        target_df = self._apply_target_key_calculations(target_df)
+        
+        # Expand target rows for alternative keys (e.g., near/far leg matching)
+        target_df = self._expand_alternative_keys(target_df)
+        
         # Normalize column names based on configuration
         source_normalized = self._normalize_dataset(source_df, 'source')
         target_normalized = self._normalize_dataset(target_df, 'target')
@@ -312,6 +428,9 @@ class ReconciliationEngine(LoggerMixin):
         
         # Create merged dataset for comparison
         merged_df = self._merge_datasets(source_processed, target_processed)
+        
+        # Apply post-merge calculations (for cross-dataset adjustments)
+        merged_df = self._apply_post_merge_calculations(merged_df)
         
         # Perform field-by-field comparison
         comparison_results = self._compare_fields(merged_df)
@@ -332,6 +451,7 @@ class ReconciliationEngine(LoggerMixin):
             'field_comparison': comparison_results,
             'config': self.config,
             'transformations': self.transformations_applied,
+            'post_merge_adjustments': self.post_merge_adjustments,
             'raw_data': {
                 'source': source_normalized,
                 'target': target_normalized
@@ -572,6 +692,108 @@ class ReconciliationEngine(LoggerMixin):
         self.logger.info(f"Datasets merged: {len(merged_df)} total records")
         return merged_df
     
+    def _apply_post_merge_calculations(self, merged_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply post-merge calculations that need access to both source and target data.
+        
+        This handles fields with 'post_merge_source_calculation' or 'post_merge_target_calculation'
+        which can reference columns from both datasets using source_ and target_ prefixes.
+        
+        Args:
+            merged_df: Merged dataset with source_ and target_ prefixed columns
+            
+        Returns:
+            pd.DataFrame: Merged dataset with post-merge calculations applied
+        """
+        for field in self.fields:
+            field_name = field['name']
+            source_col = f"source_{field_name}"
+            target_col = f"target_{field_name}"
+            
+            # Handle force_zero_when_settled flag
+            if field.get('force_zero_when_settled', False):
+                try:
+                    original_values = merged_df[source_col].copy()
+                    settlement_col = 'target_SETTLEMENT_DATE'
+                    rep_date_col = 'target_REP_DATE2'
+                    
+                    if settlement_col in merged_df.columns and rep_date_col in merged_df.columns:
+                        rep_date_parsed = pd.to_datetime(
+                            merged_df[rep_date_col], format='%d/%m/%y', errors='coerce'
+                        ).dt.strftime('%Y-%m-%d')
+                        dates_match = merged_df[settlement_col] == rep_date_parsed
+                        target_mtm_zero = pd.to_numeric(merged_df[target_col], errors='coerce') == 0
+                        
+                        merged_df[source_col] = np.where(
+                            dates_match & target_mtm_zero, 0, merged_df[source_col]
+                        )
+                        self._track_post_merge_adjustments(field_name, 'source', original_values, merged_df[source_col])
+                        self.logger.debug(f"Applied force_zero_when_settled for {field_name}")
+                    else:
+                        self.logger.warning(f"force_zero_when_settled: required columns {settlement_col} or {rep_date_col} not found")
+                except Exception as e:
+                    self.logger.error(f"Failed to apply force_zero_when_settled for {field_name}: {e}")
+            
+            # Check for post-merge source calculation
+            if 'post_merge_source_calculation' in field:
+                try:
+                    original_values = merged_df[source_col].copy()
+                    calc_func = eval(field['post_merge_source_calculation'])
+                    merged_df[source_col] = calc_func(merged_df)
+                    self._track_post_merge_adjustments(field_name, 'source', original_values, merged_df[source_col])
+                    self.logger.debug(f"Applied post-merge source calculation for {field_name}")
+                except Exception as e:
+                    self.logger.error(f"Failed to apply post-merge source calculation for {field_name}: {e}")
+            
+            # Check for post-merge target calculation
+            if 'post_merge_target_calculation' in field:
+                try:
+                    original_values = merged_df[target_col].copy()
+                    calc_func = eval(field['post_merge_target_calculation'])
+                    merged_df[target_col] = calc_func(merged_df)
+                    self._track_post_merge_adjustments(field_name, 'target', original_values, merged_df[target_col])
+                    self.logger.debug(f"Applied post-merge target calculation for {field_name}")
+                except Exception as e:
+                    self.logger.error(f"Failed to apply post-merge target calculation for {field_name}: {e}")
+        
+        return merged_df
+
+    def _track_post_merge_adjustments(self, field_name: str, dataset_type: str,
+                                       original_values: pd.Series, new_values: pd.Series) -> None:
+        """
+        Track rows where post-merge calculations changed values.
+        
+        Args:
+            field_name: Name of the field
+            dataset_type: 'source' or 'target'
+            original_values: Values before the calculation
+            new_values: Values after the calculation
+        """
+        key = f"{dataset_type}_{field_name}"
+        adjustments = []
+        
+        for idx in original_values.index:
+            orig = original_values[idx]
+            new = new_values[idx]
+            # Compare as strings to handle mixed types; skip if both NaN
+            try:
+                orig_num = float(str(orig).replace(',', '').strip()) if pd.notna(orig) else None
+                new_num = float(str(new).replace(',', '').strip()) if pd.notna(new) else None
+            except (ValueError, TypeError):
+                orig_num = orig
+                new_num = new
+            
+            if orig_num != new_num:
+                adjustments.append({
+                    'row_position': list(original_values.index).index(idx),
+                    'original_value': orig,
+                    'new_value': new
+                })
+        
+        if adjustments:
+            self.post_merge_adjustments[key] = adjustments
+            self.logger.info(f"Post-merge adjustment: {len(adjustments)} rows modified for {key}")
+
     def _compare_fields(self, merged_df: pd.DataFrame) -> Dict[str, Any]:
         """
         Compare configured fields between source and target using tolerances.

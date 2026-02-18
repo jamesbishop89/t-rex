@@ -61,11 +61,17 @@ class ConfigParser(LoggerMixin):
             SchemaOptional('transformation'): And(str, self._validate_lambda),  # Optional lambda string
             SchemaOptional('source_calculation'): And(str, self._validate_lambda),  # Optional lambda string for source calculation
             SchemaOptional('target_calculation'): And(str, self._validate_lambda),  # Optional lambda string for target calculation
+            SchemaOptional('post_merge_source_calculation'): And(str, self._validate_lambda),  # Lambda for post-merge source adjustment
+            SchemaOptional('post_merge_target_calculation'): And(str, self._validate_lambda),  # Lambda for post-merge target adjustment
             SchemaOptional('tolerance'): Or(
                 And(float, lambda x: x >= 0),  # Positive float for absolute tolerance
                 And(str, self._validate_percentage_tolerance)  # Percentage string like "1%"
             ),
-            SchemaOptional('ignore'): bool  # Optional flag to ignore field in comparison
+            SchemaOptional('ignore'): bool,  # Optional flag to ignore field in comparison
+            SchemaOptional('hidden'): bool,  # Optional flag to hide field from Excel output
+            SchemaOptional('force_zero_when_settled'): bool,  # Force source MTM to 0 when settlement date = reporting date and target MTM is 0
+            SchemaOptional('diff_percent'): bool,  # Optional flag to add Diff % column in output
+            SchemaOptional('diff_amount'): bool  # Optional flag to add Diff Amount column in output
         })
 
         # Schema for key configuration (string or dict)
@@ -74,7 +80,10 @@ class ConfigParser(LoggerMixin):
             {
                 'name': And(str, len),
                 SchemaOptional('source'): And(str, len),
-                SchemaOptional('target'): And(str, len)
+                SchemaOptional('target'): And(str, len),
+                SchemaOptional('target_alternatives'): [And(str, len)],  # Alternative target columns for matching (e.g., near/far leg)
+                SchemaOptional('target_key_calculation'): And(str, self._validate_lambda),  # Lambda to compute target key from multiple columns
+                SchemaOptional('source_key_calculation'): And(str, self._validate_lambda)  # Lambda to compute source key from multiple columns
             }
         )
 

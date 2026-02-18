@@ -19,6 +19,7 @@ from typing import Dict, List, Any, Tuple
 import io
 
 import pandas as pd
+import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, Fill, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -176,9 +177,11 @@ class ExcelGenerator(LoggerMixin):
             else:
                 key_source_map[k] = k
                 
-        # Create mapping for fields to check against source columns
+        # Create mapping for fields to check against source columns (exclude hidden fields)
         field_source_map = {}
         for f in recon_config['fields']:
+            if f.get('hidden', False):
+                continue
             source_col = f.get('source', f['name'])
             field_source_map[source_col] = f['name']
         
@@ -196,6 +199,8 @@ class ExcelGenerator(LoggerMixin):
                 ordered_keys.append(name)
                 
         for f in recon_config['fields']:
+            if f.get('hidden', False):
+                continue
             name = f['name']
             if name not in ordered_fields:
                 ordered_fields.append(name)
@@ -331,6 +336,9 @@ class ExcelGenerator(LoggerMixin):
         
         # Add transformation comments
         self._add_transformation_comments(ws, display_df, results)
+        
+        # Add post-merge adjustment comments (e.g. forced-zero MTM)
+        self._add_post_merge_comments(ws, display_df, results)
     
     def _create_different_sheet(self, wb: Workbook, results: Dict[str, Any]) -> None:
         """
@@ -361,6 +369,9 @@ class ExcelGenerator(LoggerMixin):
         
         # Add transformation comments
         self._add_transformation_comments(ws, display_df, results)
+        
+        # Add post-merge adjustment comments (e.g. forced-zero MTM)
+        self._add_post_merge_comments(ws, display_df, results)
     
     def _create_missing_in_target_sheet(self, wb: Workbook, results: Dict[str, Any]) -> None:
         """
@@ -395,9 +406,12 @@ class ExcelGenerator(LoggerMixin):
             # Get configured keys
             keys = results['config']['reconciliation']['keys']
             key_names = [k['name'] if isinstance(k, dict) else k for k in keys]
+            fields = results['config']['reconciliation']['fields']
+            hidden_field_names = {f['name'] for f in fields if f.get('hidden', False)}
             
             # Show keys and source columns (remove source_ prefix columns)
-            source_columns = [col for col in missing_df.columns if col.startswith('source_') and col != 'source___index__']
+            source_columns = [col for col in missing_df.columns if col.startswith('source_') and col != 'source___index__'
+                              and col.replace('source_', '') not in hidden_field_names]
             
             # Combine keys and source columns
             display_cols = []
@@ -451,9 +465,12 @@ class ExcelGenerator(LoggerMixin):
             # Get configured keys
             keys = results['config']['reconciliation']['keys']
             key_names = [k['name'] if isinstance(k, dict) else k for k in keys]
+            fields = results['config']['reconciliation']['fields']
+            hidden_field_names = {f['name'] for f in fields if f.get('hidden', False)}
             
             # Show keys and target columns (remove target_ prefix columns)
-            target_columns = [col for col in missing_df.columns if col.startswith('target_') and col != 'target___index__']
+            target_columns = [col for col in missing_df.columns if col.startswith('target_') and col != 'target___index__'
+                              and col.replace('target_', '') not in hidden_field_names]
             
             # Combine keys and target columns
             display_cols = []
@@ -496,14 +513,49 @@ class ExcelGenerator(LoggerMixin):
         # Start with key columns
         display_columns = key_names.copy()
         
+        # Track which fields get a diff % column
+        diff_pct_fields = []
+        
         # Add source/target pairs for each configured field (both comparison and ignored)
         for field in fields:
+            # Skip hidden fields entirely from display
+            if field.get('hidden', False):
+                continue
             field_name = field['name']
             source_col = f'source_{field_name}'
             target_col = f'target_{field_name}'
             
             if source_col in df.columns and target_col in df.columns:
                 display_columns.extend([source_col, target_col])
+                
+                # Add diff amount column (Source - Target) only if diff_amount: true
+                if field.get('diff_amount', False):
+                    source_numeric = pd.to_numeric(df[source_col], errors='coerce')
+                    target_numeric = pd.to_numeric(df[target_col], errors='coerce')
+                    
+                    # Check if both values are numeric for at least some rows
+                    if (source_numeric.notna().any() or target_numeric.notna().any()):
+                        diff_amt_col = f'Diff Amount: {field_name}'
+                        df = df.copy() if diff_amt_col not in df.columns else df
+                        df[diff_amt_col] = source_numeric - target_numeric
+                        display_columns.append(diff_amt_col)
+                
+                # Add diff % column only if field is flagged with diff_percent: true
+                if field.get('diff_percent', False):
+                    source_numeric = pd.to_numeric(df[source_col], errors='coerce')
+                    target_numeric = pd.to_numeric(df[target_col], errors='coerce')
+                    diff_col = f'diff_pct_{field_name}'
+                    # Calculate diff %: (source - target) / target * 100, handle div-by-zero
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        diff_values = np.where(
+                            target_numeric.abs() > 0,
+                            ((source_numeric - target_numeric) / target_numeric.abs()) * 100,
+                            np.where(source_numeric == target_numeric, 0.0, np.nan)
+                        )
+                    df = df.copy() if diff_col not in df.columns else df
+                    df[diff_col] = np.round(diff_values, 4)
+                    display_columns.append(diff_col)
+                    diff_pct_fields.append(field_name)
         
         # Filter to available columns
         available_columns = [col for col in display_columns if col in df.columns]
@@ -527,6 +579,9 @@ class ExcelGenerator(LoggerMixin):
                     column_renames[col] = f"Target: {field_name} (ignored)"
                 else:
                     column_renames[col] = f"Target: {field_name}"
+            elif col.startswith('diff_pct_'):
+                field_name = col.replace('diff_pct_', '')
+                column_renames[col] = f"Diff %: {field_name}"
         
         display_df = display_df.rename(columns=column_renames)
         
@@ -880,3 +935,82 @@ class ExcelGenerator(LoggerMixin):
                             
         except Exception as e:
             self.logger.warning(f"Failed to add transformation comments: {e}")
+
+    def _add_post_merge_comments(self, ws, display_df: pd.DataFrame, results: Dict[str, Any]) -> None:
+        """
+        Add Excel comments to cells where post-merge calculations changed values
+        (e.g. MTM forced to zero when settlement date equals reporting date).
+        
+        Args:
+            ws: Excel worksheet
+            display_df: DataFrame being displayed in the sheet
+            results: Reconciliation results containing post-merge adjustment info
+        """
+        try:
+            adjustments = results.get('post_merge_adjustments', {})
+            if not adjustments:
+                return
+            
+            column_positions = {col: idx + 1 for idx, col in enumerate(display_df.columns)}
+            
+            for key, adj_list in adjustments.items():
+                # key format is "source_FIELDNAME" or "target_FIELDNAME"
+                parts = key.split('_', 1)
+                if len(parts) != 2:
+                    continue
+                dataset_type, field_name = parts
+                
+                # Find the display column
+                display_col_names = [
+                    f'Source: {field_name}' if dataset_type == 'source' else f'Target: {field_name}',
+                    f'Source: {field_name} (ignored)' if dataset_type == 'source' else f'Target: {field_name} (ignored)'
+                ]
+                
+                display_col_name = None
+                for col_name in display_col_names:
+                    if col_name in column_positions:
+                        display_col_name = col_name
+                        break
+                
+                if not display_col_name:
+                    continue
+                
+                col_idx = column_positions[display_col_name]
+                
+                for adj in adj_list:
+                    row_pos = adj['row_position']
+                    if row_pos < len(display_df):
+                        excel_row = row_pos + 2  # +1 header, +1 for 1-based
+                        cell = ws.cell(row=excel_row, column=col_idx)
+                        
+                        original = adj['original_value']
+                        new_val = adj['new_value']
+                        
+                        comment_text = (
+                            f"\u26a0\ufe0f Post-Merge Adjustment:\n"
+                            f"\u2022 Original value: {original}\n"
+                            f"\u2022 Forced to: {new_val}\n"
+                            f"\u2022 Reason: Settlement date = reporting date and target MTM is 0"
+                        )
+                        
+                        if cell.comment:
+                            # Append to existing comment
+                            cell.comment.text += f"\n\n{comment_text}"
+                        else:
+                            comment = Comment(comment_text, author="T-Rex Reconciliation")
+                            comment.width = 350
+                            comment.height = 150
+                            cell.comment = comment
+                        
+                        # Style the cell italic to indicate adjustment
+                        current_font = cell.font or self.fonts['normal']
+                        cell.font = Font(
+                            name=current_font.name,
+                            size=current_font.size,
+                            bold=current_font.bold,
+                            italic=True,
+                            color=current_font.color
+                        )
+                        
+        except Exception as e:
+            self.logger.warning(f"Failed to add post-merge adjustment comments: {e}")

@@ -7,6 +7,7 @@ Key goals:
 - Preserve File 2 row formatting exactly (including decimal formatting / trailing zeros),
   by copying each input line verbatim and appending the extra field(s).
 - Flexible: works for any column (MTM, price, quantity, etc.).
+- Optional pivot/aggregation of File 1 before merging
 
 Assumptions:
 - File 2 is "one CSV record per physical line" (no embedded newlines inside quoted fields).
@@ -26,6 +27,12 @@ Optional:
                             value-col name(s) are lowered. May be repeated/comma-separated
                             and must match --value-col count when given.
   --encoding utf-8-sig      File encoding (default: utf-8-sig)
+  
+Pivot/Aggregation:
+  --pivot                   Enable pivot/aggregation of file1 before merging
+  --pivot-index deal_num    Column(s) to group by (repeatable/comma-separated)
+  --pivot-values BASE_MTM   Column(s) to aggregate (repeatable/comma-separated)
+  --pivot-aggfunc sum       Aggregation function: sum, mean, first, last, min, max (default: sum)
 """
 
 import argparse
@@ -34,6 +41,7 @@ import io
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
+import pandas as pd
 
 
 def _norm(s: str) -> str:
@@ -125,6 +133,56 @@ def serialize_one_field(value: str, dialect: csv.Dialect) -> str:
     w = csv.writer(buf, dialect=dialect)
     w.writerow([value])
     return buf.getvalue().rstrip("\r\n")
+
+
+def pivot_file1(
+    file_path: str,
+    pivot_index: List[str],
+    pivot_values: List[str],
+    aggfunc: str,
+    encoding: str,
+) -> str:
+    """
+    Pivot/aggregate file1 using pandas and return path to temporary pivoted file.
+    
+    Args:
+        file_path: Path to the CSV file to pivot
+        pivot_index: Column(s) to group by
+        pivot_values: Column(s) to aggregate
+        aggfunc: Aggregation function (sum, mean, first, last, min, max)
+        encoding: File encoding
+        
+    Returns:
+        Path to temporary pivoted CSV file
+    """
+    # Read the file
+    dialect = sniff_dialect(file_path, encoding)
+    df = pd.read_csv(file_path, encoding=encoding, dialect=dialect)
+    
+    print(f"Original file1 shape: {df.shape}", file=sys.stderr)
+    
+    # Ensure requested columns exist
+    missing_idx = [col for col in pivot_index if col not in df.columns]
+    missing_val = [col for col in pivot_values if col not in df.columns]
+    if missing_idx:
+        raise ValueError(f"Pivot index column(s) not found in file1: {missing_idx}")
+    if missing_val:
+        raise ValueError(f"Pivot value column(s) not found in file1: {missing_val}")
+    
+    # Build aggregation dict
+    agg_dict = {col: aggfunc for col in pivot_values}
+    
+    # Group and aggregate
+    grouped = df.groupby(pivot_index, as_index=False).agg(agg_dict)
+    
+    print(f"After aggregation shape: {grouped.shape}", file=sys.stderr)
+    print(f"Aggregated {len(df)} rows to {len(grouped)} rows using {aggfunc}", file=sys.stderr)
+    
+    # Write to temporary file
+    temp_path = file_path.rsplit(".", 1)[0] + "_pivoted.csv"
+    grouped.to_csv(temp_path, index=False, encoding=encoding)
+    
+    return temp_path
 
 
 def load_value_map(
@@ -263,6 +321,18 @@ def main() -> int:
                          "value-col name(s) are lowered. Repeatable / comma-separated; "
                          "must match --value-col count when given.")
     ap.add_argument("--encoding", default="utf-8-sig", help="File encoding (default: utf-8-sig)")
+    
+    # Pivot/aggregation arguments
+    ap.add_argument("--pivot", action="store_true",
+                    help="Enable pivot/aggregation of file1 before merging")
+    ap.add_argument("--pivot-index", action="append", default=None,
+                    help="Column(s) to group by for aggregation. Repeatable / comma-separated.")
+    ap.add_argument("--pivot-values", action="append", default=None,
+                    help="Column(s) to aggregate. Repeatable / comma-separated.")
+    ap.add_argument("--pivot-aggfunc", default="sum",
+                    choices=["sum", "mean", "first", "last", "min", "max"],
+                    help="Aggregation function (default: sum)")
+    
     args = ap.parse_args()
 
     key_pairs = _parse_key_pairs(args.key) if args.key else [("tran_num", "tran_num")]
@@ -275,7 +345,21 @@ def main() -> int:
     if len(out_cols) != len(value_cols):
         ap.error(f"--out-col count ({len(out_cols)}) must match --value-col count ({len(value_cols)})")
 
-    val_map = load_value_map(args.file1, file1_keys, value_cols, args.encoding)
+    # Handle pivot/aggregation if requested
+    file1_to_use = args.file1
+    if args.pivot:
+        if not args.pivot_index:
+            ap.error("--pivot requires --pivot-index to be specified")
+        if not args.pivot_values:
+            ap.error("--pivot requires --pivot-values to be specified")
+        
+        pivot_index = _parse_list(args.pivot_index)
+        pivot_values = _parse_list(args.pivot_values)
+        
+        print(f"Pivoting file1 by {pivot_index}, aggregating {pivot_values} using {args.pivot_aggfunc}...", file=sys.stderr)
+        file1_to_use = pivot_file1(args.file1, pivot_index, pivot_values, args.pivot_aggfunc, args.encoding)
+
+    val_map = load_value_map(file1_to_use, file1_keys, value_cols, args.encoding)
     merge_files(args.file2, args.out, val_map, file2_keys, out_cols, args.encoding)
 
     print(f"Matched keys from file1: {len(val_map)}", file=sys.stderr)
