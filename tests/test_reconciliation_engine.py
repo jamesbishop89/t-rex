@@ -288,6 +288,45 @@ class TestReconciliationEngine:
         assert result['matches_count'] == 2
         assert result['total_comparable'] == 3
         assert result['match_rate'] == 2/3
+    
+    def test_field_comparison_counts_one_sided_null_as_difference(self, sample_config):
+        """Test one-sided null/value pairs are counted as comparable differences."""
+        engine = ReconciliationEngine(sample_config)
+        
+        source_series = pd.Series(['A', np.nan, np.nan, 'D'])
+        target_series = pd.Series(['A', 'B', np.nan, np.nan])
+        scope_mask = pd.Series([True, True, True, False])
+        
+        result = engine._compare_field_values(
+            source_series, target_series, None, 'test_field', scope_mask
+        )
+        
+        assert result['matches'].tolist() == [True, False, True, False]
+        assert result['matches_count'] == 1
+        assert result['total_comparable'] == 2
+        assert result['match_rate'] == 0.5
+    
+    def test_compare_fields_counts_one_sided_null_for_both_records(self):
+        """Test field stats include one-sided nulls for records present in both."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{'name': 'premium_date'}]
+            }
+        }
+        engine = ReconciliationEngine(config)
+        
+        merged_df = pd.DataFrame({
+            'source_premium_date': [np.nan, np.nan],
+            'target_premium_date': ['2025-01-01', '2025-01-02'],
+            '_merge_indicator': ['both', 'both']
+        })
+        
+        comparison_results = engine._compare_fields(merged_df)
+        
+        assert comparison_results['premium_date']['matches_count'] == 0
+        assert comparison_results['premium_date']['total_comparable'] == 2
+        assert comparison_results['premium_date']['match_rate'] == 0
 
     def test_ignore_field_functionality(self):
         """Test that fields marked as ignore are handled correctly."""

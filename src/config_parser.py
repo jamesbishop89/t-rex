@@ -63,6 +63,7 @@ class ConfigParser(LoggerMixin):
             SchemaOptional('target_calculation'): And(str, self._validate_lambda),  # Optional lambda string for target calculation
             SchemaOptional('post_merge_source_calculation'): And(str, self._validate_lambda),  # Lambda for post-merge source adjustment
             SchemaOptional('post_merge_target_calculation'): And(str, self._validate_lambda),  # Lambda for post-merge target adjustment
+            SchemaOptional('post_merge_comment'): And(str, len),  # Optional reason text for post-merge adjustment comments
             SchemaOptional('tolerance'): Or(
                 And(float, lambda x: x >= 0),  # Positive float for absolute tolerance
                 And(str, self._validate_percentage_tolerance)  # Percentage string like "1%"

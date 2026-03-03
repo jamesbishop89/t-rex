@@ -102,11 +102,20 @@ def _make_composite_key(row_or_fields, key_cols, *, by_index: bool = False) -> s
 
 
 def sniff_dialect(path: str, encoding: str) -> csv.Dialect:
-    """Best-effort sniff; falls back to csv.excel (comma)."""
+    """Best-effort sniff; falls back to csv.excel (comma).
+
+    `csv.Sniffer` can occasionally mis-detect newline characters as delimiters
+    on wide CSVs with quoted commas. Constrain delimiter candidates and reject
+    invalid delimiter values defensively.
+    """
     with open(path, "r", newline="", encoding=encoding) as f:
         sample = f.read(65536)
     try:
-        return csv.Sniffer().sniff(sample)
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        delim = getattr(dialect, "delimiter", None)
+        if isinstance(delim, str) and len(delim) == 1 and delim not in ("\r", "\n", "\x00"):
+            return dialect
+        return csv.excel
     except csv.Error:
         return csv.excel
 

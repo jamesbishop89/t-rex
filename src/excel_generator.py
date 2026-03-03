@@ -950,6 +950,14 @@ class ExcelGenerator(LoggerMixin):
             adjustments = results.get('post_merge_adjustments', {})
             if not adjustments:
                 return
+
+            sheet_name = ws.title
+            if sheet_name == 'Matched':
+                original_df = results['records']['matched']
+            elif sheet_name == 'Different':
+                original_df = results['records']['different']
+            else:
+                return
             
             column_positions = {col: idx + 1 for idx, col in enumerate(display_df.columns)}
             
@@ -979,38 +987,53 @@ class ExcelGenerator(LoggerMixin):
                 
                 for adj in adj_list:
                     row_pos = adj['row_position']
-                    if row_pos < len(display_df):
-                        excel_row = row_pos + 2  # +1 header, +1 for 1-based
-                        cell = ws.cell(row=excel_row, column=col_idx)
-                        
-                        original = adj['original_value']
-                        new_val = adj['new_value']
-                        
-                        comment_text = (
-                            f"\u26a0\ufe0f Post-Merge Adjustment:\n"
-                            f"\u2022 Original value: {original}\n"
-                            f"\u2022 Forced to: {new_val}\n"
-                            f"\u2022 Reason: Settlement date = reporting date and target MTM is 0"
-                        )
-                        
-                        if cell.comment:
-                            # Append to existing comment
-                            cell.comment.text += f"\n\n{comment_text}"
-                        else:
-                            comment = Comment(comment_text, author="T-Rex Reconciliation")
-                            comment.width = 350
-                            comment.height = 150
-                            cell.comment = comment
-                        
-                        # Style the cell italic to indicate adjustment
-                        current_font = cell.font or self.fonts['normal']
-                        cell.font = Font(
-                            name=current_font.name,
-                            size=current_font.size,
-                            bold=current_font.bold,
-                            italic=True,
-                            color=current_font.color
-                        )
+                    # row_position is based on the merged dataframe index, not the
+                    # position within a specific sheet subset (Matched/Different).
+                    if row_pos not in original_df.index:
+                        continue
+
+                    row_idx = original_df.index.get_loc(row_pos)
+                    if isinstance(row_idx, slice):
+                        row_idx = row_idx.start
+                    elif not isinstance(row_idx, int):
+                        # Handle rare non-int indexer return types defensively.
+                        try:
+                            row_idx = int(row_idx[0])
+                        except Exception:
+                            continue
+
+                    excel_row = row_idx + 2  # +1 header, +1 for 1-based indexing
+                    cell = ws.cell(row=excel_row, column=col_idx)
+                    
+                    original = adj['original_value']
+                    new_val = adj['new_value']
+                    reason = adj.get('reason') or "Post-merge adjustment applied"
+                    
+                    comment_text = (
+                        f"\u26a0\ufe0f Post-Merge Adjustment:\n"
+                        f"\u2022 Original value: {original}\n"
+                        f"\u2022 Adjusted value: {new_val}\n"
+                        f"\u2022 Reason: {reason}"
+                    )
+                    
+                    if cell.comment:
+                        # Append to existing comment
+                        cell.comment.text += f"\n\n{comment_text}"
+                    else:
+                        comment = Comment(comment_text, author="T-Rex Reconciliation")
+                        comment.width = 350
+                        comment.height = 150
+                        cell.comment = comment
+                    
+                    # Style the cell italic to indicate adjustment
+                    current_font = cell.font or self.fonts['normal']
+                    cell.font = Font(
+                        name=current_font.name,
+                        size=current_font.size,
+                        bold=current_font.bold,
+                        italic=True,
+                        color=current_font.color
+                    )
                         
         except Exception as e:
             self.logger.warning(f"Failed to add post-merge adjustment comments: {e}")

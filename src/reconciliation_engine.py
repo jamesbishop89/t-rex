@@ -727,7 +727,13 @@ class ReconciliationEngine(LoggerMixin):
                         merged_df[source_col] = np.where(
                             dates_match & target_mtm_zero, 0, merged_df[source_col]
                         )
-                        self._track_post_merge_adjustments(field_name, 'source', original_values, merged_df[source_col])
+                        self._track_post_merge_adjustments(
+                            field_name,
+                            'source',
+                            original_values,
+                            merged_df[source_col],
+                            reason="Settlement date = reporting date and target MTM is 0",
+                        )
                         self.logger.debug(f"Applied force_zero_when_settled for {field_name}")
                     else:
                         self.logger.warning(f"force_zero_when_settled: required columns {settlement_col} or {rep_date_col} not found")
@@ -740,7 +746,13 @@ class ReconciliationEngine(LoggerMixin):
                     original_values = merged_df[source_col].copy()
                     calc_func = eval(field['post_merge_source_calculation'])
                     merged_df[source_col] = calc_func(merged_df)
-                    self._track_post_merge_adjustments(field_name, 'source', original_values, merged_df[source_col])
+                    self._track_post_merge_adjustments(
+                        field_name,
+                        'source',
+                        original_values,
+                        merged_df[source_col],
+                        reason=field.get('post_merge_comment', 'Post-merge source calculation applied'),
+                    )
                     self.logger.debug(f"Applied post-merge source calculation for {field_name}")
                 except Exception as e:
                     self.logger.error(f"Failed to apply post-merge source calculation for {field_name}: {e}")
@@ -751,15 +763,27 @@ class ReconciliationEngine(LoggerMixin):
                     original_values = merged_df[target_col].copy()
                     calc_func = eval(field['post_merge_target_calculation'])
                     merged_df[target_col] = calc_func(merged_df)
-                    self._track_post_merge_adjustments(field_name, 'target', original_values, merged_df[target_col])
+                    self._track_post_merge_adjustments(
+                        field_name,
+                        'target',
+                        original_values,
+                        merged_df[target_col],
+                        reason=field.get('post_merge_comment', 'Post-merge target calculation applied'),
+                    )
                     self.logger.debug(f"Applied post-merge target calculation for {field_name}")
                 except Exception as e:
                     self.logger.error(f"Failed to apply post-merge target calculation for {field_name}: {e}")
         
         return merged_df
 
-    def _track_post_merge_adjustments(self, field_name: str, dataset_type: str,
-                                       original_values: pd.Series, new_values: pd.Series) -> None:
+    def _track_post_merge_adjustments(
+        self,
+        field_name: str,
+        dataset_type: str,
+        original_values: pd.Series,
+        new_values: pd.Series,
+        reason: Optional[str] = None,
+    ) -> None:
         """
         Track rows where post-merge calculations changed values.
         
@@ -768,6 +792,7 @@ class ReconciliationEngine(LoggerMixin):
             dataset_type: 'source' or 'target'
             original_values: Values before the calculation
             new_values: Values after the calculation
+            reason: Human-readable reason for the adjustment
         """
         key = f"{dataset_type}_{field_name}"
         adjustments = []
@@ -787,11 +812,14 @@ class ReconciliationEngine(LoggerMixin):
                 adjustments.append({
                     'row_position': list(original_values.index).index(idx),
                     'original_value': orig,
-                    'new_value': new
+                    'new_value': new,
+                    'reason': reason
                 })
         
         if adjustments:
-            self.post_merge_adjustments[key] = adjustments
+            existing = self.post_merge_adjustments.get(key, [])
+            existing.extend(adjustments)
+            self.post_merge_adjustments[key] = existing
             self.logger.info(f"Post-merge adjustment: {len(adjustments)} rows modified for {key}")
 
     def _compare_fields(self, merged_df: pd.DataFrame) -> Dict[str, Any]:
@@ -808,6 +836,10 @@ class ReconciliationEngine(LoggerMixin):
         self.logger.info("Comparing fields between source and target")
         
         comparison_results = {}
+        if '_merge_indicator' in merged_df.columns:
+            both_records_mask = merged_df['_merge_indicator'] == 'both'
+        else:
+            both_records_mask = pd.Series(True, index=merged_df.index, dtype=bool)
         
         for field_config in self.comparison_fields:  # Only compare non-ignored fields
             field_name = field_config['name']
@@ -822,7 +854,11 @@ class ReconciliationEngine(LoggerMixin):
             # Compare field with tolerance if specified
             tolerance_config = field_config.get('tolerance')
             comparison_result = self._compare_field_values(
-                merged_df[source_col], merged_df[target_col], tolerance_config, field_name
+                merged_df[source_col],
+                merged_df[target_col],
+                tolerance_config,
+                field_name,
+                both_records_mask
             )
             
             comparison_results[field_name] = comparison_result
@@ -836,7 +872,8 @@ class ReconciliationEngine(LoggerMixin):
     
     def _compare_field_values(self, source_series: pd.Series, target_series: pd.Series,
                             tolerance_config: Optional[Union[float, str]], 
-                            field_name: str) -> Dict[str, Any]:
+                            field_name: str,
+                            scope_mask: Optional[pd.Series] = None) -> Dict[str, Any]:
         """
         Compare two series of values with optional tolerance.
         
@@ -845,6 +882,7 @@ class ReconciliationEngine(LoggerMixin):
             target_series: Target field values
             tolerance_config: Tolerance configuration (float or percentage string)
             field_name: Name of field being compared
+            scope_mask: Optional boolean mask limiting rows used for field statistics
             
         Returns:
             Dict[str, Any]: Comparison results including match indicators
@@ -856,10 +894,18 @@ class ReconciliationEngine(LoggerMixin):
             # Tolerance-based comparison
             matches = self._compare_with_tolerance(source_series, target_series, tolerance_config)
         
-        # Count matches where both values are present
-        both_present = source_series.notna() & target_series.notna()
-        matches_count = matches[both_present].sum()
-        total_comparable = both_present.sum()
+        if scope_mask is None:
+            scope_mask = pd.Series(True, index=source_series.index, dtype=bool)
+        else:
+            scope_mask = scope_mask.reindex(source_series.index, fill_value=False).astype(bool)
+        
+        # Comparable rows are in-scope rows where at least one side has a value.
+        # This counts one-sided blank/value pairs as differences, while excluding
+        # both-missing rows from match-rate statistics.
+        both_missing = source_series.isna() & target_series.isna()
+        comparable = scope_mask & ~both_missing
+        matches_count = int(matches[comparable].sum())
+        total_comparable = int(comparable.sum())
         
         return {
             'matches': matches,
