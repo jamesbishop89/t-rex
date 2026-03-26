@@ -13,12 +13,20 @@ T-Rex is a production-ready Python tool for comparing source and target datasets
 - **Auto-Sized Excel Columns**: All sheets automatically size columns to fit content for optimal readability
 - **Performance Optimized**: Designed for large datasets (>1M rows)
 - **Production Ready**: Full error handling, logging, and unit test coverage
-- **Visual Analytics**: Summary charts and formatted Excel output
+- **Formatted Reporting**: Structured Excel output with highlighting and comments
 
 ## Installation
 
+Install runtime dependencies for running from a repository checkout:
+
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+Install the package together with development tooling:
+
+```bash
+python -m pip install -e ".[dev]"
 ```
 
 ## Usage
@@ -26,11 +34,14 @@ pip install -r requirements.txt
 ### Command Line
 
 ```bash
-# Using output filename from config (with automatic timestamp)
+# Installed console script
+t-rex --source source.csv --target target.csv --config config.yaml
+
+# Compatibility wrapper when running directly from a repo checkout
 python t-rex.py --source source.csv --target target.csv --config config.yaml
 
 # Override output filename via command line
-python t-rex.py --source source.csv --target target.csv --config config.yaml --output output.xlsx
+t-rex --source source.csv --target target.csv --config config.yaml --output output.xlsx
 ```
 
 ### YAML Configuration Example
@@ -70,7 +81,7 @@ Apply different mappings based on field values:
         "USD": "US Dollar"
 ```
 
-#### Dataset-Specific Processing  
+#### Dataset-Specific Processing
 Apply mappings only to source, target, or both:
 ```yaml
 - name: field_name
@@ -81,7 +92,7 @@ Apply mappings only to source, target, or both:
 #### Condition Types
 Supports 18 condition types including:
 - String operations: `equals`, `starts_with`, `contains`, `regex_match`
-- Numeric comparisons: `greater_than`, `less_than_equal`  
+- Numeric comparisons: `greater_than`, `less_than_equal`
 - List operations: `in_list`, `not_in_list`
 - Null checks: `is_null`, `is_not_null`
 
@@ -111,9 +122,14 @@ output:
 
 ## Testing
 
-Run unit tests:
+If you have only installed runtime dependencies, install the dev extras first:
 ```bash
-pytest tests/ -v --cov=src
+python -m pip install -e ".[dev]"
+```
+
+Run the test suite:
+```bash
+python -m pytest tests/ -v --cov=src
 ```
 
 ## Performance
@@ -135,5 +151,4 @@ pytest tests/ -v --cov=src
 - pandas
 - pyyaml
 - openpyxl
-- matplotlib
 - schema

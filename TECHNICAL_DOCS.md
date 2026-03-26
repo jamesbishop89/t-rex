@@ -2,109 +2,116 @@
 
 ## Architecture Overview
 
-T-Rex is designed with a modular architecture that separates concerns and ensures maintainability:
+T-Rex is organized around a shared orchestration service so the packaged CLI,
+compatibility wrapper, and tests all execute the same workflow.
 
-```
-t-rex.py (Main CLI)
-    ├── ConfigParser (YAML validation)
-    ├── DataLoader (File I/O)
-    ├── ReconciliationEngine (Core logic)
-    ├── ExcelGenerator (Output formatting)
-    └── LoggerSetup (Logging infrastructure)
+```text
+src.cli (packaged CLI)
+  -> setup_logger()
+  -> ReconciliationRunner
+     -> ConfigParser
+        -> config_normalizer
+        -> safe_lambda
+     -> DataLoader
+     -> ReconciliationEngine
+        -> reconciliation_conditions
+     -> ExcelGenerator
+
+t-rex.py -> thin compatibility wrapper around src.cli.main()
 ```
 
 ## Module Descriptions
 
-### 1. t-rex.py (Main Entry Point)
-- **Purpose**: Command-line interface and orchestration
-- **Key Functions**:
-  - `parse_arguments()`: CLI argument parsing with validation
-  - `validate_file_paths()`: File existence and permission checks
-  - `run_reconciliation()`: Main workflow orchestration
-  - `main()`: Entry point with error handling
+### 1. src.cli
+- Purpose: Command-line interface for installed package usage
+- Key responsibilities:
+  - Parse CLI arguments
+  - Initialize logging
+  - Invoke `ReconciliationRunner`
+  - Print execution summary and exit codes
 
-### 2. ConfigParser
-- **Purpose**: YAML configuration parsing and validation
-- **Key Features**:
-  - Schema validation using `schema` library
-  - Lambda function validation
-  - Tolerance format validation (absolute/percentage)
-  - Field uniqueness checking
-- **Key Methods**:
+### 2. ReconciliationRunner
+- Purpose: Shared orchestration layer for end-to-end reconciliation runs
+- Key responsibilities:
+  - Validate input and output paths
+  - Parse configuration
+  - Load source and target datasets
+  - Execute reconciliation
+  - Generate Excel output
+  - Return structured run metadata and statistics
+
+### 3. ConfigParser, config_normalizer, and safe_lambda
+- Purpose: Validate and normalize YAML configuration before runtime use
+- Key features:
+  - Schema validation using `schema`
+  - Reconciliation key and field normalization
+  - Tolerance parsing and validation
+  - Restricted lambda validation and compilation
+- Key methods:
   - `parse_config()`: Main parsing entry point
-  - `_validate_lambda()`: Lambda expression validation
-  - `_validate_percentage_tolerance()`: Percentage format validation
-  - `parse_tolerance()`: Tolerance standardization
+  - `get_output_filename_with_timestamp()`: Output naming helper
+  - `normalize_runtime_config()`: Canonical config shaping
 
-### 3. DataLoader
-- **Purpose**: Multi-format data loading with validation
-- **Supported Formats**: CSV, Excel (.xlsx/.xls), JSON, Parquet, Pickle
-- **Key Features**:
+### 4. DataLoader
+- Purpose: Multi-format data loading with validation and preprocessing
+- Supported formats: CSV, Excel (`.xlsx`/`.xls`), JSON, Parquet, Pickle
+- Key features:
   - Automatic format detection
-  - Data preprocessing (null standardization, string trimming)
-  - Memory usage monitoring
-  - Comprehensive validation
-- **Key Methods**:
+  - Null standardization and string trimming
+  - Dataset validation and metadata reporting
+- Key methods:
   - `load_data()`: Universal data loading
   - `preprocess_data()`: Data cleaning
   - `get_data_info()`: Dataset analysis
 
-### 4. ReconciliationEngine
-- **Purpose**: Core reconciliation logic
-- **Key Features**:
+### 5. ReconciliationEngine and reconciliation_conditions
+- Purpose: Core comparison logic and condition evaluation
+- Key features:
   - Field-by-field comparison
-  - Tolerance-based matching (absolute/percentage)
-  - Data transformation pipeline (mapping → transformation)
-  - Record categorization (matched/different/missing)
-- **Key Methods**:
+  - Absolute and percentage tolerances
+  - Mapping, conditional mapping, and transformation pipelines
+  - Record categorization into matched, different, and missing buckets
+- Key methods:
   - `reconcile()`: Main reconciliation workflow
   - `_compare_with_tolerance()`: Tolerance-aware comparison
-  - `_apply_mapping()` / `_apply_transformation()`: Data preprocessing
-  - `_categorize_records()`: Result classification
+  - `_apply_mapping()`: Static mapping support
+  - `_apply_conditional_mapping()`: Condition-based mapping support
+  - `_apply_transformation()`: Safe lambda-based transformations
 
-### 5. ExcelGenerator
-- **Purpose**: Comprehensive Excel report generation
-- **Output Sheets**:
-  - Summary: Statistics and metadata
-  - Matched: Records within tolerance
-  - Different: Records with differences (highlighted)
-  - Missing in Target: Source-only records
-  - Missing in Source: Target-only records
-- **Key Features**:
-  - Professional formatting
-  - Conditional highlighting
+### 6. ExcelGenerator
+- Purpose: Excel report generation and output formatting
+- Output sheets:
+  - Summary
+  - Matched
+  - Different
+  - Missing in Target
+  - Missing in Source
+- Key features:
+  - Structured formatting and highlighting
   - Frozen headers and filters
-  - Chart generation
-- **Key Methods**:
-  - `generate_excel()`: Main generation workflow
+  - Comment-based transformation traceability
+  - Source-column ordering in summary views
+- Key methods:
+  - `generate_excel()`: Main workbook generation
   - `_highlight_differences()`: Conditional formatting
-  - `_add_summary_charts()`: Chart creation
+  - `_add_transformation_comments()`: Transformation traceability
 
-### 6. LoggerSetup
-- **Purpose**: Centralized logging configuration
-- **Features**:
-  - Multiple output handlers (console/file)
+### 7. LoggerSetup
+- Purpose: Centralized logging configuration
+- Features:
+  - Console and file handlers
   - Configurable log levels
-  - Structured formatting
-  - Logger mixin for classes
+  - Structured formatting helpers
 
 ## Data Flow
 
-```
-Input Files → DataLoader → ReconciliationEngine → ExcelGenerator → Output Excel
-     ↓              ↓              ↓                    ↓
-Config YAML → ConfigParser → Field Rules → Report Formatting
-```
-
-### Detailed Flow:
-1. **Configuration Parse**: YAML → Validated Config Object
-2. **Data Loading**: Files → Validated DataFrames
-3. **Data Preprocessing**: Apply mappings and transformations
-4. **Dataset Merging**: Outer join on reconciliation keys
-5. **Field Comparison**: Tolerance-aware field-by-field comparison
-6. **Record Categorization**: Sort into matched/different/missing buckets
-7. **Statistics Calculation**: Generate summary metrics
-8. **Excel Generation**: Format and export comprehensive report
+1. `src.cli` parses arguments and initializes logging.
+2. `ReconciliationRunner` validates the requested paths.
+3. `ConfigParser` loads YAML, validates it, and normalizes runtime config.
+4. `DataLoader` loads source and target files into DataFrames.
+5. `ReconciliationEngine` applies preprocessing, merges datasets, and compares fields.
+6. `ExcelGenerator` writes the workbook and transformation comments.
+7. `ReconciliationRunner` returns statistics and execution metadata.
 
 ## Error Handling Strategy
 
@@ -116,14 +123,14 @@ Config YAML → ConfigParser → Field Rules → Report Formatting
 
 ### Runtime Error Handling
 - Graceful handling of missing fields
-- Tolerance calculation edge cases (zero division)
-- Lambda function execution errors
-- Excel generation failures
+- Tolerance edge cases such as zero division
+- Controlled evaluation failures for config lambdas
+- Excel generation failures with logging context
 
 ### Logging Strategy
-- INFO: Progress and statistics
-- WARNING: Non-fatal issues (missing fields)
-- ERROR: Fatal errors with context
+- INFO: Progress and summary statistics
+- WARNING: Recoverable issues such as missing optional fields
+- ERROR: Fatal failures with execution context
 - DEBUG: Detailed execution traces
 
 ## Performance Considerations
@@ -132,43 +139,46 @@ Config YAML → ConfigParser → Field Rules → Report Formatting
 - Vectorized pandas operations
 - Minimal data copying
 - Efficient DataFrame merging
-- Memory usage monitoring
+- Deferred Excel formatting until output generation
 
 ### Processing Optimization
-- Single-pass data processing where possible
-- Efficient comparison algorithms
-- Optimized Excel writing
-- Progress logging for large datasets
+- Single-pass preprocessing where possible
+- Reuse of normalized config structures
+- Shared runner used by CLI and tests to reduce drift
 
 ### Scalability
-- Designed for 100K+ row datasets
-- Memory-efficient operations
-- Configurable batch processing (future enhancement)
+- Designed for large datasets
+- Memory footprint depends primarily on DataFrame size and merge width
+- Logging exposes row and column counts for operational visibility
 
 ## Testing Strategy
 
-### Unit Tests (>80% Coverage)
-- All public methods tested
-- Edge cases covered (empty data, invalid configs)
-- Error conditions validated
-- Mock objects for external dependencies
-
-### Integration Tests
-- End-to-end workflow validation
-- Real file I/O testing
-- Multiple configuration scenarios
-- Output validation
+### Coverage Areas
+- Configuration parsing and normalization
+- Safe lambda validation
+- Data loading and preprocessing
+- Reconciliation logic and condition evaluation
+- Excel generation and logging
+- Runner orchestration and helper utilities
+- End-to-end integration flows
 
 ### Test Organization
-```
+```text
 tests/
-├── conftest.py              # Shared fixtures
-├── test_config_parser.py    # Configuration tests
-├── test_data_loader.py      # Data loading tests
-├── test_reconciliation_engine.py  # Core logic tests
-├── test_excel_generator.py # Output generation tests
-├── test_logger_setup.py    # Logging tests
-└── test_integration.py     # End-to-end tests
+|-- conftest.py
+|-- test_config_normalizer.py
+|-- test_config_parser.py
+|-- test_config_parser_unit.py
+|-- test_data_loader.py
+|-- test_excel_generator.py
+|-- test_filters.py
+|-- test_generate_all_recs.py
+|-- test_integration.py
+|-- test_logger_setup.py
+|-- test_merge_files.py
+|-- test_reconciliation_engine.py
+|-- test_reconciliation_runner.py
+`-- test_safe_lambda.py
 ```
 
 ## Configuration Reference
@@ -176,169 +186,131 @@ tests/
 ### YAML Schema
 ```yaml
 reconciliation:
-  keys: [list]              # Required: Reconciliation key columns
-  fields:                   # Required: List of field configurations
-    - name: string          # Required: Field name
-      mapping: dict         # Optional: Value mapping
-      transformation: string # Optional: Lambda function
-      tolerance: number|string # Optional: Comparison tolerance
+  keys:
+    - name: trade_id
+      source: trade_id
+      target: trade_id
+      target_alternatives: []
+  fields:
+    - name: execution_price
+      source: execution_price
+      target: execution_price
+      mapping: {}
+      conditional_mapping: {}
+      transformation: "lambda x: x"
+      tolerance: "0.1%"
+      apply_to: "both"
 ```
 
 ### Field Processing Order
-1. **Mapping**: Apply value mappings first
-2. **Transformation**: Apply lambda functions second
-3. **Comparison**: Use tolerance for comparison
+1. Mapping
+2. Conditional mapping
+3. Transformation
+4. Comparison
 
 ### Tolerance Formats
-- **Absolute**: `0.01` (numeric value)
-- **Percentage**: `"1%"` (string with % suffix)
+- Absolute: `0.01`
+- Percentage: `"1%"`
 
 ## Advanced Field Configuration
 
-#### Dataset-Specific Application (`apply_to`)
-Fields can be configured to apply mappings and transformations to specific datasets:
+### Dataset-Specific Application (`apply_to`)
+Fields can be configured to apply mappings and transformations to specific
+datasets:
 
 ```yaml
 fields:
   - name: field_name
     mapping: {...}
-    apply_to: "source"    # Options: "source", "target", "both" (default)
-    
+    apply_to: "source"
+
   - name: another_field
     conditional_mapping:
       condition_field: some_field
-      apply_to: "target"  # Apply conditional mapping only to target dataset
+      apply_to: "target"
       mappings: {...}
 ```
 
-#### Conditional Mapping
+### Conditional Mapping
 Apply different value mappings based on conditions from other fields:
 
 ```yaml
 fields:
   - name: status
     conditional_mapping:
-      condition_field: trade_type          # Field to check condition against
-      condition_type: "equals"             # Type of condition (see below)
-      condition_value: "EQUITY"            # Value to compare (if required)
-      condition_list: ["VAL1", "VAL2"]     # List of values (for in_list/not_in_list)
-      apply_to: "both"                     # Dataset application scope
+      condition_field: trade_type
+      condition_type: "equals"
+      condition_value: "EQUITY"
+      condition_list: ["VAL1", "VAL2"]
+      apply_to: "both"
       mappings:
-        "default":                         # When condition is true, apply these mappings
+        "default":
           "N": "New"
           "F": "Filled"
 ```
 
-#### Supported Condition Types
+### Supported Condition Types
 
-**String Comparison:**
-- `equals`: Exact match with condition_value
-- `not_equals`: Does not match condition_value
-- `starts_with`: Begins with condition_value
-- `not_starts_with`: Does not begin with condition_value
-- `ends_with`: Ends with condition_value
-- `not_ends_with`: Does not end with condition_value
-- `contains`: Contains condition_value substring
-- `not_contains`: Does not contain condition_value substring
+String comparison:
+- `equals`
+- `not_equals`
+- `starts_with`
+- `not_starts_with`
+- `ends_with`
+- `not_ends_with`
+- `contains`
+- `not_contains`
 
-**Numeric Comparison:**
-- `less_than`: Numerically less than condition_value
-- `less_than_equal`: Numerically less than or equal to condition_value
-- `greater_than`: Numerically greater than condition_value
-- `greater_than_equal`: Numerically greater than or equal to condition_value
+Numeric comparison:
+- `less_than`
+- `less_than_equal`
+- `greater_than`
+- `greater_than_equal`
 
-**List Operations:**
-- `in_list`: Value is in condition_list
-- `not_in_list`: Value is not in condition_list
+List operations:
+- `in_list`
+- `not_in_list`
 
-**Pattern Matching:**
-- `regex_match`: Matches regex pattern in condition_value
-- `regex_not_match`: Does not match regex pattern in condition_value
+Pattern matching:
+- `regex_match`
+- `regex_not_match`
 
-**Null Checks:**
-- `is_null`: Field value is null/empty/NaN
-- `is_not_null`: Field value is not null/empty/NaN
-
-#### Examples
-
-**Business Rule Example:**
-```yaml
-# Map currency codes differently based on market region
-- name: currency_display
-  conditional_mapping:
-    condition_field: market_region
-    condition_type: "equals"
-    condition_value: "APAC"
-    mappings:
-      "default":
-        "USD": "US Dollar"
-        "JPY": "Japanese Yen"
-        "HKD": "Hong Kong Dollar"
-
-# Handle large trades differently
-- name: processing_flag
-  conditional_mapping:
-    condition_field: notional_amount
-    condition_type: "greater_than"
-    condition_value: "1000000"
-    mappings:
-      "default":
-        "AUTO": "MANUAL_REVIEW"
-
-# Premium client handling
-- name: priority_level
-  conditional_mapping:
-    condition_field: client_tier
-    condition_type: "in_list"
-    condition_list: ["PREMIUM", "VIP", "INSTITUTIONAL"]
-    mappings:
-      "default":
-        "STANDARD": "HIGH"
-        "LOW": "MEDIUM"
-
-# Regex pattern matching for account types
-- name: account_category
-  conditional_mapping:
-    condition_field: account_number
-    condition_type: "regex_match"
-    condition_value: "^[0-9]{6}[A-Z]{2}$"
-    mappings:
-      "default":
-        "UNKNOWN": "INSTITUTIONAL"
-```
+Null checks:
+- `is_null`
+- `is_not_null`
 
 ## Production Deployment
 
 ### Requirements
 - Python 3.8+
-- See `requirements.txt` for dependencies
-- Sufficient memory for dataset size (rule of thumb: 2-3x file size)
+- Dependencies from `requirements.txt`
+- Sufficient memory for the dataset size
 
 ### Monitoring
 - Comprehensive logging for audit trails
-- Performance metrics in logs
-- Error tracking and alerting
+- Execution time and record counts in summaries
+- Error tracking through logger output
 
 ### Security Considerations
-- Input validation prevents code injection
-- File path validation prevents directory traversal
-- Lambda functions executed in controlled context
+- Input validation prevents unsafe file usage
+- Config lambdas are compiled through a restricted validator
+- Output path preparation is centralized in the runner
 
 ## Troubleshooting Guide
 
 ### Common Issues
-1. **Configuration Errors**: Check YAML syntax and schema
-2. **Missing Files**: Verify file paths and permissions
-3. **Memory Issues**: Monitor dataset size and available RAM
-4. **Performance**: Check for unnecessary data copies
+1. Configuration errors: check YAML syntax and required fields.
+2. Missing files: verify file paths and permissions.
+3. Memory pressure: reduce dataset size or increase available RAM.
+4. Unexpected comparison results: inspect mappings, transformations, and tolerances.
 
 ### Debug Mode
 ```bash
-python t-rex.py --log-level DEBUG ...
+t-rex --log-level DEBUG ...
 ```
 
 ### Validation Steps
-1. Test configuration with small dataset
-2. Verify field mappings and transformations
-3. Check tolerance settings with known differences
-4. Validate output format and content
+1. Test the configuration with a small dataset.
+2. Verify field mappings and transformations.
+3. Check tolerance settings with known differences.
+4. Validate the output workbook and summary statistics.

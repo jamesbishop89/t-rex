@@ -15,11 +15,14 @@ import argparse
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from src.logger_setup import setup_logger
+from src.merge_files import run_merge
+from src.reconciliation_runner import ReconciliationRunRequest, ReconciliationRunner
 
 
 @dataclass(frozen=True)
@@ -144,13 +147,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--python-exe",
         default=sys.executable,
-        help="Python executable to invoke t-rex.py with.",
+        help="Python executable to invoke helper scripts with.",
     )
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
-        help="Log level passed to t-rex.py.",
+        help="Log level for reconciliation runs.",
     )
     parser.add_argument(
         "--timestamp",
@@ -267,6 +270,49 @@ def normalize_column_name(name: object) -> str:
     return " ".join(str(name).replace("\n", " ").split())
 
 
+def build_mtm_summary_file(excel_path: Path, output_path: Path) -> None:
+    """Build the Deal Num -> Base MTM summary CSV directly from the MTM workbook."""
+    import pandas as pd  # type: ignore
+
+    def normalize_deal_num(value: object) -> str:
+        if pd.isna(value):
+            return ""
+
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric_value = float(value)
+            if numeric_value.is_integer():
+                return str(int(numeric_value))
+
+        text = str(value).strip()
+        try:
+            numeric_value = float(text)
+        except ValueError:
+            return text
+        return str(int(numeric_value)) if numeric_value.is_integer() else text
+
+    df = pd.read_excel(excel_path, sheet_name=0)
+    df.columns = [normalize_column_name(col) for col in df.columns]
+
+    required = ["Deal Num", "Base MTM"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required MTM columns: {missing}. Available columns: {list(df.columns)}")
+
+    summary_df = df[required].copy()
+    summary_df["Deal Num"] = summary_df["Deal Num"].map(normalize_deal_num)
+    summary_df = summary_df[summary_df["Deal Num"].notna() & summary_df["Deal Num"].ne("")]
+    summary_df["Base MTM"] = pd.to_numeric(summary_df["Base MTM"], errors="coerce")
+
+    grouped = (
+        summary_df
+        .groupby("Deal Num", as_index=False, sort=True)["Base MTM"]
+        .sum(min_count=1)
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    grouped.to_csv(output_path, index=False, encoding="utf-8-sig")
+
+
 def find_latest_mtm_excel(paths: RunPaths) -> Optional[Path]:
     patterns = ("MTM*.xlsx", "MTM*.xls")
     candidates: List[Path] = []
@@ -279,10 +325,7 @@ def find_latest_mtm_excel(paths: RunPaths) -> Optional[Path]:
         return None
     return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
 
-
-def build_mtm_source_from_excel(
-    repo_root: Path, args: argparse.Namespace, paths: RunPaths
-) -> bool:
+def build_mtm_source_from_excel(args: argparse.Namespace, paths: RunPaths) -> bool:
     excel_path = find_latest_mtm_excel(paths)
     if not excel_path:
         print(f"  Missing MTM source file: {paths.mtm_source_file}")
@@ -299,109 +342,25 @@ def build_mtm_source_from_excel(
         print("  Existing MTM summary file will be overwritten.")
 
     if args.dry_run:
-        preview_root = Path(tempfile.gettempdir()) / "mtm_build_preview"
-        raw_csv = preview_root / "MTM_deals_raw.csv"
-        pivot_merge_out = preview_root / "MTM_deals_raw_merged.csv"
-        print("  Status: DRY RUN (would convert Excel to CSV and pivot Base MTM by Deal Num)")
-
-        cmd = [
-            args.python_exe,
-            "src/merge_files.py",
-            "--file1",
-            str(raw_csv),
-            "--file2",
-            str(raw_csv),
-            "--out",
-            str(pivot_merge_out),
-            "--key",
-            "Deal Num",
-            "--value-col",
-            "Base MTM",
-            "--out-col",
-            "_tmp",
-            "--pivot",
-            "--pivot-index",
-            "Deal Num",
-            "--pivot-values",
-            "Base MTM",
-        ]
-        rc = run_command(cmd, repo_root, args.dry_run)
-        if rc != 0:
-            return False
-
+        print("  Status: DRY RUN (would aggregate Base MTM by Deal Num directly from Excel)")
         print(f"  Would write MTM summary file: {paths.mtm_source_file}")
         print("")
         return True
 
     try:
-        import pandas as pd  # type: ignore
+        build_mtm_summary_file(excel_path, paths.mtm_source_file)
     except Exception as exc:
-        print(f"  Status: FAILED (cannot import pandas: {exc})")
+        print(f"  Status: FAILED ({exc})")
         return False
-
-    try:
-        df = pd.read_excel(excel_path, sheet_name=0)
-    except Exception as exc:
-        print(f"  Status: FAILED (cannot read Excel file: {exc})")
-        return False
-
-    df.columns = [normalize_column_name(col) for col in df.columns]
-    required = ["Deal Num", "Base MTM"]
-    missing = [col for col in required if col not in df.columns]
-    if missing:
-        print(f"  Status: FAILED (missing required MTM columns: {missing})")
-        print(f"  Available columns: {list(df.columns)}")
-        return False
-
-    with tempfile.TemporaryDirectory(prefix="mtm_build_") as tmp_dir:
-        tmp_dir_path = Path(tmp_dir)
-        raw_csv = tmp_dir_path / "MTM_deals_raw.csv"
-        pivot_merge_out = tmp_dir_path / "MTM_deals_raw_merged.csv"
-        pivot_csv = tmp_dir_path / "MTM_deals_raw_pivoted.csv"
-
-        df.to_csv(raw_csv, index=False, encoding="utf-8-sig")
-        print("  Status: Converted Excel -> CSV")
-
-        cmd = [
-            args.python_exe,
-            "src/merge_files.py",
-            "--file1",
-            str(raw_csv),
-            "--file2",
-            str(raw_csv),
-            "--out",
-            str(pivot_merge_out),
-            "--key",
-            "Deal Num",
-            "--value-col",
-            "Base MTM",
-            "--out-col",
-            "_tmp",
-            "--pivot",
-            "--pivot-index",
-            "Deal Num",
-            "--pivot-values",
-            "Base MTM",
-        ]
-        rc = run_command(cmd, repo_root, args.dry_run)
-        if rc != 0:
-            return False
-
-        if not pivot_csv.exists():
-            print(f"  Status: FAILED (expected pivot output not found: {pivot_csv})")
-            return False
-
-        paths.mtm_source_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(pivot_csv, paths.mtm_source_file)
 
     print(f"  Status: Wrote MTM summary file: {paths.mtm_source_file}")
     print("")
     return True
 
 
-def run_mtm_merge_step(repo_root: Path, args: argparse.Namespace, paths: RunPaths) -> bool:
+def run_mtm_merge_step(args: argparse.Namespace, paths: RunPaths) -> bool:
     print("Pre-step 1: Merge MTM into GVA files")
-    if not build_mtm_source_from_excel(repo_root, args, paths):
+    if not build_mtm_source_from_excel(args, paths):
         return False
 
     for index, job in enumerate(MTM_MERGE_JOBS, start=1):
@@ -417,56 +376,49 @@ def run_mtm_merge_step(repo_root: Path, args: argparse.Namespace, paths: RunPath
             print(f"    Status: SKIPPED (missing file2: {file2_path})")
             continue
 
-        cmd = [
-            args.python_exe,
-            "src/merge_files.py",
-            "--file1",
-            str(paths.mtm_source_file),
-            "--file2",
-            str(file2_path),
-            "--out",
-            str(out_path),
-            "--key",
-            "deal_tracking_num=Deal Num",
-            "--value-col",
-            "Base MTM",
-            "--out-col",
-            "mtm",
-        ]
-        rc = run_command(cmd, repo_root, args.dry_run)
-        if rc != 0:
+        if args.dry_run:
+            print("    Status: DRY RUN (would merge Base MTM into the GVA extract)")
+            continue
+
+        try:
+            run_merge(
+                str(paths.mtm_source_file),
+                str(file2_path),
+                str(out_path),
+                [("deal_tracking_num", "Deal Num")],
+                ["Base MTM"],
+                ["mtm"],
+            )
+            print("    Status: OK")
+        except Exception as exc:
+            print(f"    Status: FAILED ({exc})")
             return False
     print("")
     return True
 
 
-def run_qt_end_merge_step(repo_root: Path, args: argparse.Namespace, paths: RunPaths) -> bool:
+def run_qt_end_merge_step(args: argparse.Namespace, paths: RunPaths) -> bool:
     print("Pre-step 2: Merge QT_END from dm04 into dm03")
     print(f"  File1 (dm04): {paths.dm04_file}")
     print(f"  File2 (dm03 raw): {paths.dm03_raw_file}")
     print(f"  Out (dm03 merged): {paths.dm03_merged_file}")
 
-    cmd = [
-        args.python_exe,
-        "src/merge_files.py",
-        "--file1",
-        str(paths.dm04_file),
-        "--file2",
-        str(paths.dm03_raw_file),
-        "--out",
-        str(paths.dm03_merged_file),
-        "--key",
-        "INSTRUMENT",
-        "--key",
-        "TP_CMCMAT=LABEL",
-        "--value-col",
-        "QT_END",
-        "--out-col",
-        "QT_END",
-    ]
-    rc = run_command(cmd, repo_root, args.dry_run)
-    if rc != 0:
-        return False
+    if args.dry_run:
+        print("  Status: DRY RUN (would merge QT_END from dm04 into dm03)")
+    else:
+        try:
+            run_merge(
+                str(paths.dm04_file),
+                str(paths.dm03_raw_file),
+                str(paths.dm03_merged_file),
+                [("INSTRUMENT", "INSTRUMENT"), ("TP_CMCMAT", "LABEL")],
+                ["QT_END"],
+                ["QT_END"],
+            )
+            print("  Status: OK")
+        except Exception as exc:
+            print(f"  Status: FAILED ({exc})")
+            return False
 
     if args.no_dm03_txt_copy:
         print("  Skipping dm03_tp_cm_rep.txt copy (--no-dm03-txt-copy).")
@@ -485,9 +437,11 @@ def run_qt_end_merge_step(repo_root: Path, args: argparse.Namespace, paths: RunP
 
 def main() -> int:
     args = parse_args()
+    setup_logger(args.log_level)
     repo_root = Path(__file__).resolve().parents[1]
     run_folder = args.run_folder
     timestamp = args.timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    runner = None if args.dry_run else ReconciliationRunner()
 
     try:
         selected_jobs = select_jobs(args.jobs)
@@ -518,7 +472,7 @@ def main() -> int:
     print("")
 
     if not args.skip_mtm_merge:
-        ok = run_mtm_merge_step(repo_root, args, paths)
+        ok = run_mtm_merge_step(args, paths)
         if not ok:
             return 1
     else:
@@ -526,7 +480,7 @@ def main() -> int:
         print("")
 
     if not args.skip_qt_end_merge:
-        ok = run_qt_end_merge_step(repo_root, args, paths)
+        ok = run_qt_end_merge_step(args, paths)
         if not ok:
             return 1
     else:
@@ -613,7 +567,23 @@ def main() -> int:
         print(f"  Source: {source_path}")
         print(f"  Target: {target_path}")
         print(f"  Output: {output_path}")
-        rc = run_command(cmd, repo_root, args.dry_run)
+        if args.dry_run:
+            rc = run_command(cmd, repo_root, True)
+        else:
+            try:
+                assert runner is not None
+                runner.run(
+                    ReconciliationRunRequest(
+                        source_path=str(source_path),
+                        target_path=str(target_path),
+                        config_path=str(config_path),
+                        output_path=str(output_path),
+                    )
+                )
+                rc = 0
+            except Exception as exc:
+                print(f"  Error: {exc}")
+                rc = 1
         if rc == 0:
             if not args.dry_run:
                 generated_files.append(output_path)

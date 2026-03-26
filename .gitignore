@@ -71,6 +71,8 @@ logs/
 *.temp
 temp/
 tmp/
+.codex-tmp/
+.codex-runner-tests/
 
 # Jupyter Notebook
 .ipynb_checkpoints

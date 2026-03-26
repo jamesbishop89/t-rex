@@ -22,7 +22,10 @@ class TestDataLoader:
         loader = DataLoader()
         assert loader.supported_extensions is not None
         assert '.csv' in loader.supported_extensions
+        assert '.txt' in loader.supported_extensions
         assert '.xlsx' in loader.supported_extensions
+        assert '.pkl' not in loader.supported_extensions
+        assert '.pickle' not in loader.supported_extensions
     
     def test_load_csv_file(self, sample_csv_files):
         """Test loading CSV files."""
@@ -44,13 +47,30 @@ class TestDataLoader:
     
     def test_load_unsupported_format(self, temp_dir):
         """Test loading unsupported file format."""
-        unsupported_file = temp_dir / "test.txt"
+        unsupported_file = temp_dir / "test.xml"
         unsupported_file.write_text("some content")
         
         loader = DataLoader()
         
         with pytest.raises(ValueError, match="Unsupported file format"):
             loader.load_data(str(unsupported_file))
+
+    def test_load_txt_file(self, temp_dir):
+        """Test loading delimited text files."""
+        txt_content = """id|value|status
+1|100|Active
+2|200|Inactive"""
+
+        txt_file = temp_dir / "test.txt"
+        txt_file.write_text(txt_content)
+
+        loader = DataLoader()
+        df = loader.load_data(str(txt_file))
+
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 2
+        assert list(df.columns) == ['id', 'value', 'status']
+        assert df['status'].tolist() == ['Active', 'Inactive']
     
     def test_load_empty_csv(self, temp_dir):
         """Test loading empty CSV file."""
@@ -61,6 +81,17 @@ class TestDataLoader:
         
         with pytest.raises(ValueError, match="Data file is empty"):
             loader.load_data(str(empty_csv))
+
+    def test_load_header_only_csv(self, temp_dir):
+        """Test loading a header-only CSV file."""
+        header_only_csv = temp_dir / "header_only.csv"
+        header_only_csv.write_text("id,value,status\n")
+
+        loader = DataLoader()
+        df = loader.load_data(str(header_only_csv))
+
+        assert list(df.columns) == ['id', 'value', 'status']
+        assert df.empty
     
     def test_validate_dataframe_valid(self):
         """Test validating valid DataFrame."""
@@ -78,12 +109,12 @@ class TestDataLoader:
             loader._validate_dataframe(None, "test.csv")
     
     def test_validate_dataframe_empty(self):
-        """Test validating empty DataFrame."""
+        """Test validating empty DataFrame with columns."""
         loader = DataLoader()
-        df = pd.DataFrame()
-        
-        with pytest.raises(ValueError, match="Data file is empty"):
-            loader._validate_dataframe(df, "test.csv")
+        df = pd.DataFrame(columns=['col1', 'col2'])
+
+        loader._validate_dataframe(df, "test.csv")
+        assert df.empty
     
     def test_validate_dataframe_no_columns(self):
         """Test validating DataFrame with no columns."""

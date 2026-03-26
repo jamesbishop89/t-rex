@@ -40,7 +40,7 @@ import csv
 import io
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 
@@ -231,6 +231,67 @@ def load_value_map(
     return val_map
 
 
+def run_merge(
+    file1_path: str,
+    file2_path: str,
+    out_path: str,
+    key_pairs: List[Tuple[str, str]],
+    value_cols: List[str],
+    out_cols: Optional[List[str]] = None,
+    *,
+    encoding: str = "utf-8-sig",
+    pivot: bool = False,
+    pivot_index: Optional[List[str]] = None,
+    pivot_values: Optional[List[str]] = None,
+    pivot_aggfunc: str = "sum",
+) -> Dict[str, object]:
+    """
+    Execute a merge operation directly as a library call.
+
+    Returns a small metadata payload for callers that want to log the result.
+    """
+    resolved_out_cols = out_cols or [value.lower() for value in value_cols]
+    if len(resolved_out_cols) != len(value_cols):
+        raise ValueError(
+            f"out_cols count ({len(resolved_out_cols)}) must match "
+            f"value_cols count ({len(value_cols)})"
+        )
+
+    file2_keys = [pair[0] for pair in key_pairs]
+    file1_keys = [pair[1] for pair in key_pairs]
+
+    file1_to_use = file1_path
+    cleanup_path: Optional[Path] = None
+    if pivot:
+        if not pivot_index:
+            raise ValueError("pivot=True requires pivot_index")
+        if not pivot_values:
+            raise ValueError("pivot=True requires pivot_values")
+        file1_to_use = pivot_file1(
+            file1_path,
+            pivot_index,
+            pivot_values,
+            pivot_aggfunc,
+            encoding,
+        )
+        cleanup_path = Path(file1_to_use)
+
+    try:
+        val_map = load_value_map(file1_to_use, file1_keys, value_cols, encoding)
+        merge_files(file2_path, out_path, val_map, file2_keys, resolved_out_cols, encoding)
+    finally:
+        if cleanup_path and cleanup_path.exists():
+            cleanup_path.unlink(missing_ok=True)
+
+    return {
+        "matched_keys": len(val_map),
+        "key_pairs": key_pairs,
+        "value_cols": value_cols,
+        "out_cols": resolved_out_cols,
+        "output_path": out_path,
+    }
+
+
 def merge_files(
     file2_path: str,
     out_path: str,
@@ -345,33 +406,41 @@ def main() -> int:
     args = ap.parse_args()
 
     key_pairs = _parse_key_pairs(args.key) if args.key else [("tran_num", "tran_num")]
-    file2_keys = [p[0] for p in key_pairs]
-    file1_keys = [p[1] for p in key_pairs]
-
     value_cols = _parse_list(args.value_col) if args.value_col else ["MTM"]
     out_cols = _parse_list(args.out_col) if args.out_col else [v.lower() for v in value_cols]
 
     if len(out_cols) != len(value_cols):
         ap.error(f"--out-col count ({len(out_cols)}) must match --value-col count ({len(value_cols)})")
 
-    # Handle pivot/aggregation if requested
-    file1_to_use = args.file1
+    pivot_index = _parse_list(args.pivot_index) if args.pivot_index else None
+    pivot_values = _parse_list(args.pivot_values) if args.pivot_values else None
+
     if args.pivot:
-        if not args.pivot_index:
+        if not pivot_index:
             ap.error("--pivot requires --pivot-index to be specified")
-        if not args.pivot_values:
+        if not pivot_values:
             ap.error("--pivot requires --pivot-values to be specified")
-        
-        pivot_index = _parse_list(args.pivot_index)
-        pivot_values = _parse_list(args.pivot_values)
-        
-        print(f"Pivoting file1 by {pivot_index}, aggregating {pivot_values} using {args.pivot_aggfunc}...", file=sys.stderr)
-        file1_to_use = pivot_file1(args.file1, pivot_index, pivot_values, args.pivot_aggfunc, args.encoding)
 
-    val_map = load_value_map(file1_to_use, file1_keys, value_cols, args.encoding)
-    merge_files(args.file2, args.out, val_map, file2_keys, out_cols, args.encoding)
+        print(
+            f"Pivoting file1 by {pivot_index}, aggregating {pivot_values} using {args.pivot_aggfunc}...",
+            file=sys.stderr,
+        )
 
-    print(f"Matched keys from file1: {len(val_map)}", file=sys.stderr)
+    result = run_merge(
+        args.file1,
+        args.file2,
+        args.out,
+        key_pairs,
+        value_cols,
+        out_cols,
+        encoding=args.encoding,
+        pivot=args.pivot,
+        pivot_index=pivot_index,
+        pivot_values=pivot_values,
+        pivot_aggfunc=args.pivot_aggfunc,
+    )
+
+    print(f"Matched keys from file1: {result['matched_keys']}", file=sys.stderr)
     key_desc = ', '.join(f'{f2}={f1}' if f2 != f1 else f2 for f2, f1 in key_pairs)
     print(f"Key column(s): {key_desc}", file=sys.stderr)
     print(f"Value column(s): {', '.join(value_cols)} -> {', '.join(out_cols)}", file=sys.stderr)

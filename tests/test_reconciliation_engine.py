@@ -11,208 +11,380 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.reconciliation_engine import ReconciliationEngine
+from src.config_normalizer import normalize_runtime_config
 
 
 class TestReconciliationEngine:
     """Test cases for ReconciliationEngine class."""
-    
+
     def test_init(self, sample_config):
         """Test ReconciliationEngine initialization."""
         engine = ReconciliationEngine(sample_config)
-        
-        assert engine.config == sample_config
+
+        assert engine.config == normalize_runtime_config(sample_config)
         assert engine.keys == ['id']
         assert len(engine.fields) == 3
         assert len(engine.field_configs) == 3
-    
+
     def test_reconcile_basic(self, sample_config, sample_source_data, sample_target_data):
         """Test basic reconciliation process."""
         engine = ReconciliationEngine(sample_config)
         results = engine.reconcile(sample_source_data, sample_target_data)
-        
+
         assert 'records' in results
         assert 'statistics' in results
         assert 'field_comparison' in results
         assert 'config' in results
-        
+
         # Check record categories
         assert 'matched' in results['records']
         assert 'different' in results['records']
         assert 'missing_in_source' in results['records']
         assert 'missing_in_target' in results['records']
-    
+
+    def test_reconcile_rejects_duplicate_keys(self):
+        """Duplicate reconciliation keys should fail fast before merging."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{'name': 'amount'}]
+            }
+        }
+        source_data = pd.DataFrame({
+            'id': [1, 1],
+            'amount': [100.0, 200.0]
+        })
+        target_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0]
+        })
+
+        engine = ReconciliationEngine(config)
+
+        with pytest.raises(ValueError, match="Duplicate reconciliation keys found in source data"):
+            engine.reconcile(source_data, target_data)
+
+    def test_validate_unique_keys_ignores_incomplete_keys(self):
+        """Blank/null reconciliation keys should not trigger duplicate-key failures."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{'name': 'amount'}]
+            }
+        }
+        df = pd.DataFrame({
+            'id': [np.nan, np.nan, '', ' ', 1],
+            'amount': [10.0, 11.0, 12.0, 13.0, 14.0],
+        })
+
+        engine = ReconciliationEngine(config)
+
+        engine._validate_unique_keys(df, 'target')
+
+    def test_reconcile_allows_multiple_incomplete_target_keys(self):
+        """Rows with incomplete target keys should be treated as unmatched, not merge errors."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{'name': 'amount'}]
+            }
+        }
+        source_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+        target_data = pd.DataFrame({
+            'id': [1, np.nan, np.nan],
+            'amount': [100.0, 50.0, 75.0],
+        })
+
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+
+        assert len(results['records']['matched']) == 1
+        assert len(results['records']['missing_in_source']) == 2
+
+    def test_source_key_calculation_failure_raises(self):
+        """Broken key calculations should fail the run instead of logging and continuing."""
+        config = {
+            'reconciliation': {
+                'keys': [{
+                    'name': 'id',
+                    'source_key_calculation': "lambda df: df['missing_key_column'].str.strip()",
+                }],
+                'fields': [{'name': 'amount'}],
+            }
+        }
+        source_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+        target_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+
+        engine = ReconciliationEngine(config)
+
+        with pytest.raises(ValueError, match="Source key calculation failed for 'id'"):
+            engine.reconcile(source_data, target_data)
+
+    def test_source_field_calculation_failure_raises(self):
+        """Broken field calculations should fail the run instead of silently degrading output."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {'name': 'amount'},
+                    {
+                        'name': 'derived_amount',
+                        'source_calculation': "lambda df: df['missing_amount_column'].astype(float)",
+                    },
+                ],
+            }
+        }
+        source_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+        target_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+            'derived_amount': [100.0],
+        })
+
+        engine = ReconciliationEngine(config)
+
+        with pytest.raises(ValueError, match="Source field calculation failed for 'derived_amount'"):
+            engine.reconcile(source_data, target_data)
+
+    def test_post_merge_calculation_failure_raises(self):
+        """Broken post-merge calculations should fail the run instead of logging and continuing."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{
+                    'name': 'amount',
+                    'post_merge_source_calculation': "lambda df: df['missing_post_merge_column']",
+                }],
+            }
+        }
+        source_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+        target_data = pd.DataFrame({
+            'id': [1],
+            'amount': [100.0],
+        })
+
+        engine = ReconciliationEngine(config)
+
+        with pytest.raises(ValueError, match="Post-merge source calculation failed for 'amount'"):
+            engine.reconcile(source_data, target_data)
+
+    def test_track_post_merge_adjustments_uses_stable_row_indexes(self):
+        """Post-merge adjustment tracking should preserve source/target row ids."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [{'name': 'amount'}],
+            }
+        }
+        engine = ReconciliationEngine(config)
+
+        original_values = pd.Series([10.0, 20.0], index=[100, 101])
+        new_values = pd.Series([0.0, 20.0], index=[100, 101])
+        row_index_values = pd.Series([11, 12], index=[100, 101])
+
+        engine._track_post_merge_adjustments(
+            'amount',
+            'source',
+            original_values,
+            new_values,
+            row_index_values=row_index_values,
+            reason='Forced to zero',
+        )
+
+        adjustments = engine.post_merge_adjustments['source_amount']
+        assert len(adjustments) == 1
+        assert adjustments[0]['row_index'] == 11
+        assert adjustments[0]['merged_index'] == 100
+        assert 'row_position' not in adjustments[0]
+        assert adjustments[0]['reason'] == 'Forced to zero'
+
     def test_validate_input_data_valid(self, sample_config, sample_source_data, sample_target_data):
         """Test input data validation with valid data."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Should not raise any exception
         engine._validate_input_data(sample_source_data, sample_target_data)
-    
+
     def test_validate_input_data_missing_key_source(self, sample_config, sample_target_data):
         """Test input data validation with missing key in source."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Create source data without 'id' column
         source_data = pd.DataFrame({
             'amount': [100, 200],
             'status': ['Active', 'Inactive']
         })
-        
+
         with pytest.raises(ValueError, match="Missing reconciliation keys in source data"):
             engine._validate_input_data(source_data, sample_target_data)
-    
+
     def test_validate_input_data_missing_key_target(self, sample_config, sample_source_data):
         """Test input data validation with missing key in target."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Create target data without 'id' column
         target_data = pd.DataFrame({
             'amount': [100, 200],
             'status': ['A', 'I']
         })
-        
+
         with pytest.raises(ValueError, match="Missing reconciliation keys in target data"):
             engine._validate_input_data(sample_source_data, target_data)
-    
+
     def test_apply_mapping(self, sample_config):
         """Test applying field mappings."""
         engine = ReconciliationEngine(sample_config)
-        
+
         df = pd.DataFrame({
             'status': ['Active', 'Inactive', 'Active', 'Unknown']
         })
-        
+
         mapping = {'Active': 'A', 'Inactive': 'I'}
         result_df = engine._apply_mapping(df, 'status', mapping, 'test')
-        
+
         assert result_df['status'].iloc[0] == 'A'
         assert result_df['status'].iloc[1] == 'I'
         assert result_df['status'].iloc[2] == 'A'
         assert result_df['status'].iloc[3] == 'Unknown'  # Unmapped value remains
-    
+
     def test_apply_transformation(self, sample_config):
         """Test applying field transformations."""
         engine = ReconciliationEngine(sample_config)
-        
+
         df = pd.DataFrame({
             'date': ['  2025-01-01  ', '2025-01-02 ', ' 2025-01-03', None]
         })
-        
+
         transformation = 'lambda x: x.strip()'
         result_df = engine._apply_transformation(df, 'date', transformation, 'test')
-        
+
         assert result_df['date'].iloc[0] == '2025-01-01'
         assert result_df['date'].iloc[1] == '2025-01-02'
         assert result_df['date'].iloc[2] == '2025-01-03'
         assert pd.isna(result_df['date'].iloc[3])  # None remains None
-    
+
     def test_apply_transformation_invalid(self, sample_config):
         """Test applying invalid transformation."""
         engine = ReconciliationEngine(sample_config)
-        
+
         df = pd.DataFrame({'field': ['value1', 'value2']})
-        
+
         with pytest.raises(ValueError, match="Transformation failed"):
             engine._apply_transformation(df, 'field', 'invalid lambda', 'test')
-    
+
     def test_compare_with_tolerance_absolute(self, sample_config):
         """Test tolerance comparison with absolute values."""
         engine = ReconciliationEngine(sample_config)
-        
+
         source_series = pd.Series([100.00, 200.00, 300.00])
         target_series = pd.Series([100.01, 199.99, 301.00])
-        
+
         # Test with 0.01 tolerance
         matches = engine._compare_with_tolerance(source_series, target_series, 0.01)
         assert matches.iloc[0] == True   # 0.01 difference, within tolerance
         assert matches.iloc[1] == True   # 0.01 difference, within tolerance
         assert matches.iloc[2] == False  # 1.00 difference, outside tolerance
-        
+
         # Test with 1.0 tolerance
         matches = engine._compare_with_tolerance(source_series, target_series, 1.0)
         assert matches.iloc[0] == True   # All within 1.0 tolerance
         assert matches.iloc[1] == True
         assert matches.iloc[2] == True
-    
+
     def test_compare_with_tolerance_percentage(self, sample_config):
         """Test tolerance comparison with percentage values."""
         engine = ReconciliationEngine(sample_config)
-        
+
         source_series = pd.Series([100.00, 200.00, 0.00])
         target_series = pd.Series([101.00, 198.00, 0.00])
-        
+
         # Test with 1% tolerance
         matches = engine._compare_with_tolerance(source_series, target_series, "1%")
         assert matches.iloc[0] == True   # 1% difference, within tolerance
         assert matches.iloc[1] == True   # 1% difference, within tolerance
         assert matches.iloc[2] == True   # Both zero, should match
-        
+
         # Test with 0.5% tolerance
         matches = engine._compare_with_tolerance(source_series, target_series, "0.5%")
         assert matches.iloc[0] == False  # 1% difference, outside 0.5% tolerance
         assert matches.iloc[1] == False  # 1% difference, outside 0.5% tolerance
         assert matches.iloc[2] == True   # Both zero, should match
-    
+
     def test_compare_with_tolerance_nan_values(self, sample_config):
         """Test tolerance comparison with NaN values."""
         engine = ReconciliationEngine(sample_config)
-        
+
         source_series = pd.Series([100.00, np.nan, 300.00])
         target_series = pd.Series([100.01, np.nan, np.nan])
-        
+
         matches = engine._compare_with_tolerance(source_series, target_series, 0.01)
         assert matches.iloc[0] == True   # Within tolerance
         assert matches.iloc[1] == True   # Both NaN, should match
         assert matches.iloc[2] == False  # One NaN, one value, should not match
-    
+
     def test_merge_datasets(self, sample_config, sample_source_data, sample_target_data):
         """Test merging source and target datasets."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Preprocess the data first
         source_processed = engine._preprocess_data(sample_source_data.copy(), 'source')
         target_processed = engine._preprocess_data(sample_target_data.copy(), 'target')
-        
+
         merged_df = engine._merge_datasets(source_processed, target_processed)
-        
+
         assert '_merge_indicator' in merged_df.columns
         assert len(merged_df) >= max(len(sample_source_data), len(sample_target_data))
-        
+
         # Check that we have source_ and target_ prefixed columns
         source_cols = [col for col in merged_df.columns if col.startswith('source_')]
         target_cols = [col for col in merged_df.columns if col.startswith('target_')]
-        
+
         assert len(source_cols) > 0
         assert len(target_cols) > 0
-    
+
     def test_categorize_records(self, sample_config, sample_source_data, sample_target_data):
         """Test categorizing records into different categories."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Preprocess and merge data
         source_processed = engine._preprocess_data(sample_source_data.copy(), 'source')
         target_processed = engine._preprocess_data(sample_target_data.copy(), 'target')
         merged_df = engine._merge_datasets(source_processed, target_processed)
-        
+
         # Perform field comparison
         comparison_results = engine._compare_fields(merged_df)
-        
+
         # Categorize records
         categorized = engine._categorize_records(merged_df, comparison_results)
-        
+
         assert 'matched' in categorized
         assert 'different' in categorized
         assert 'missing_in_source' in categorized
         assert 'missing_in_target' in categorized
-        
+
         # Check that all categorized records are DataFrames
         for category, df in categorized.items():
             assert isinstance(df, pd.DataFrame)
-    
+
     def test_calculate_statistics(self, sample_config, sample_source_data, sample_target_data):
         """Test calculating reconciliation statistics."""
         engine = ReconciliationEngine(sample_config)
-        
+
         # Create mock categorized records
         categorized_records = {
             'matched': pd.DataFrame({'id': [1, 2]}),
@@ -220,7 +392,7 @@ class TestReconciliationEngine:
             'missing_in_source': pd.DataFrame({'id': [5]}),
             'missing_in_target': pd.DataFrame({'id': [4]})
         }
-        
+
         # Create mock comparison results
         comparison_results = {
             'amount': {
@@ -229,11 +401,11 @@ class TestReconciliationEngine:
                 'match_rate': 0.67
             }
         }
-        
+
         stats = engine._calculate_statistics(
             sample_source_data, sample_target_data, categorized_records, comparison_results
         )
-        
+
         assert stats['total_source'] == len(sample_source_data)
         assert stats['total_target'] == len(sample_target_data)
         assert stats['matched'] == 2
@@ -243,7 +415,7 @@ class TestReconciliationEngine:
         assert 'field_statistics' in stats
         assert 'match_rate' in stats
         assert 'difference_rate' in stats
-    
+
     def test_preprocess_data_order(self, sample_config):
         """Test that preprocessing applies mapping before transformation."""
         # Create config with both mapping and transformation
@@ -259,53 +431,53 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         engine = ReconciliationEngine(config)
-        
+
         df = pd.DataFrame({
             'id': [1, 2],
             'status': ['Active', 'Inactive']
         })
-        
+
         processed_df = engine._preprocess_data(df, 'test')
-        
+
         # Mapping should be applied first (Active -> A), then transformation (A -> a)
         assert processed_df['status'].iloc[0] == 'a'
         assert processed_df['status'].iloc[1] == 'i'
-    
+
     def test_field_comparison_no_tolerance(self, sample_config):
         """Test field comparison without tolerance (exact match)."""
         engine = ReconciliationEngine(sample_config)
-        
+
         source_series = pd.Series(['A', 'B', 'C'])
         target_series = pd.Series(['A', 'X', 'C'])
-        
+
         result = engine._compare_field_values(source_series, target_series, None, 'test_field')
-        
+
         assert result['matches'].iloc[0] == True   # A == A
         assert result['matches'].iloc[1] == False  # B != X
         assert result['matches'].iloc[2] == True   # C == C
         assert result['matches_count'] == 2
         assert result['total_comparable'] == 3
         assert result['match_rate'] == 2/3
-    
+
     def test_field_comparison_counts_one_sided_null_as_difference(self, sample_config):
         """Test one-sided null/value pairs are counted as comparable differences."""
         engine = ReconciliationEngine(sample_config)
-        
+
         source_series = pd.Series(['A', np.nan, np.nan, 'D'])
         target_series = pd.Series(['A', 'B', np.nan, np.nan])
         scope_mask = pd.Series([True, True, True, False])
-        
+
         result = engine._compare_field_values(
             source_series, target_series, None, 'test_field', scope_mask
         )
-        
+
         assert result['matches'].tolist() == [True, False, True, False]
         assert result['matches_count'] == 1
         assert result['total_comparable'] == 2
         assert result['match_rate'] == 0.5
-    
+
     def test_compare_fields_counts_one_sided_null_for_both_records(self):
         """Test field stats include one-sided nulls for records present in both."""
         config = {
@@ -315,15 +487,15 @@ class TestReconciliationEngine:
             }
         }
         engine = ReconciliationEngine(config)
-        
+
         merged_df = pd.DataFrame({
             'source_premium_date': [np.nan, np.nan],
             'target_premium_date': ['2025-01-01', '2025-01-02'],
             '_merge_indicator': ['both', 'both']
         })
-        
+
         comparison_results = engine._compare_fields(merged_df)
-        
+
         assert comparison_results['premium_date']['matches_count'] == 0
         assert comparison_results['premium_date']['total_comparable'] == 2
         assert comparison_results['premium_date']['match_rate'] == 0
@@ -351,20 +523,20 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         engine = ReconciliationEngine(config)
-        
+
         # Test field separation
         comparison_field_names = [field['name'] for field in engine.comparison_fields]
         ignored_field_names = [field['name'] for field in engine.ignored_fields]
-        
+
         assert 'amount' in comparison_field_names
         assert 'status' in comparison_field_names
         assert 'comments' in ignored_field_names
         assert 'timestamp' in ignored_field_names
         assert len(engine.comparison_fields) == 2
         assert len(engine.ignored_fields) == 2
-        
+
         # Test reconciliation with ignored fields
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
@@ -373,7 +545,7 @@ class TestReconciliationEngine:
             'comments': ['Comment 1', 'Comment 2', 'Comment 3'],
             'timestamp': ['2025-01-01', '2025-01-02', '2025-01-03']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'amount': [100.00, 200.00, 300.00],
@@ -381,13 +553,13 @@ class TestReconciliationEngine:
             'comments': ['Different Comment 1', 'Different Comment 2', 'Different Comment 3'],
             'timestamp': ['2025-02-01', '2025-02-02', '2025-02-03']
         })
-        
+
         results = engine.reconcile(source_data, target_data)
-        
+
         # All records should match since ignored fields don't affect comparison
         assert len(results['records']['matched']) == 3
         assert len(results['records']['different']) == 0
-        
+
         # Field comparison should only include non-ignored fields
         field_results = results['field_comparison']
         assert 'amount' in field_results
@@ -412,23 +584,23 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         engine = ReconciliationEngine(config)
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2],
             'amount': [100.00, 200.00],
             'notes': ['Note 1', 'Note 2']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2],
             'amount': [100.01, 199.99],  # Within tolerance
             'notes': ['Different Note 1', 'Different Note 2']  # Different but ignored
         })
-        
+
         results = engine.reconcile(source_data, target_data)
-        
+
         # Records should match despite different notes (ignored field)
         assert len(results['records']['matched']) == 2
         assert len(results['records']['different']) == 0
@@ -464,32 +636,32 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         # Create test data
         source_data = pd.DataFrame({
             'id': [1, 2, 3, 4],
             'type': ['EQUITY', 'EQUITY', 'BOND', 'BOND'],
             'status': ['N', 'F', 'N', 'C']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3, 4],
             'type': ['EQUITY', 'EQUITY', 'BOND', 'BOND'],
             'status': ['New', 'Filled', 'New Order', 'Void']
         })
-        
+
         # Run reconciliation
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         # All records should match after conditional mapping
         assert results['statistics']['matched'] == 4
         assert results['statistics']['different'] == 0
-        
+
         # Check that the mapping was applied correctly in the processed data
         matched_records = results['records']['matched']
         assert len(matched_records) == 4
-        
+
         # Verify source values were mapped correctly
         source_status_values = matched_records['source_status'].tolist()
         expected_mapped_values = ['New', 'Filled', 'New Order', 'Void']
@@ -520,22 +692,22 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'type': ['EQUITY', 'BOND', 'EQUITY'],
             'status': ['N', 'X', 'F']  # 'X' for BOND type has no mapping
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'type': ['EQUITY', 'BOND', 'EQUITY'],
             'status': ['New', 'X', 'Filled']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         # Should have matches where mapping applied and original values for unmapped
         assert results['statistics']['matched'] == 3
         assert results['statistics']['different'] == 0
@@ -558,23 +730,23 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1],
             'status': ['N']
             # missing_field is not present
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1],
             'status': ['N']
         })
-        
+
         engine = ReconciliationEngine(config)
-        
+
         # Should handle missing condition field gracefully
         results = engine.reconcile(source_data, target_data)
-        
+
         # Should still work, just without applying conditional mapping
         assert results['statistics']['matched'] == 1
 
@@ -603,26 +775,26 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3, 4],
             'counterparty': ['XYZ Corp', 'ABC_Bank', 'DEF Ltd', 'ABC Corp'],
             'currency1': ['KRA', 'KRA', 'KRA', 'KRA']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3, 4],
             'counterparty': ['XYZ Corp', 'ABC_Bank', 'DEF Ltd', 'ABC Corp'],
             'currency1': ['KRW', 'KRA', 'KRW', 'KRA']  # Expected results after mapping
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         # All records should match after conditional mapping is applied
         assert results['statistics']['matched'] == 4
         assert results['statistics']['different'] == 0
-        
+
         # Verify the mapping was applied correctly by checking the processed source data
         # We can access the actual processed data through the reconciliation engine's internal data
         # For testing purposes, we'll verify by running the reconciliation and checking it succeeds
@@ -648,23 +820,62 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'product_code': ['EQ_STOCK', 'EQ_ETF', 'FI_BOND'],
             'status': ['N', 'F', 'N']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'product_code': ['EQ_STOCK', 'EQ_ETF', 'FI_BOND'],
             'status': ['Equity_New', 'Equity_Filled', 'N']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         assert results['statistics']['matched'] == 3
+
+    def test_conditional_mapping_equals_numeric_dtype(self):
+        """Conditional equality should use numeric comparison rules for numeric columns."""
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {'name': 'quantity'},
+                    {
+                        'name': 'trade_flag',
+                        'conditional_mapping': {
+                            'condition_field': 'quantity',
+                            'condition_type': 'equals',
+                            'condition_value': '5',
+                            'mappings': {
+                                'default': {'NORMAL': 'FIVE'},
+                            },
+                        },
+                    },
+                ],
+            }
+        }
+
+        source_data = pd.DataFrame({
+            'id': [1, 2],
+            'quantity': [5.0, 7.0],
+            'trade_flag': ['NORMAL', 'NORMAL'],
+        })
+        target_data = pd.DataFrame({
+            'id': [1, 2],
+            'quantity': [5.0, 7.0],
+            'trade_flag': ['FIVE', 'NORMAL'],
+        })
+
+        engine = ReconciliationEngine(config)
+        results = engine.reconcile(source_data, target_data)
+
+        assert results['statistics']['matched'] == 2
+        assert results['statistics']['different'] == 0
 
     def test_conditional_mapping_greater_than(self):
         """Test conditional mapping with greater_than condition."""
@@ -686,22 +897,22 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'quantity': [15000, 5000, 25000],
             'trade_flag': ['NORMAL', 'SMALL', 'NORMAL']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'quantity': [15000, 5000, 25000],
             'trade_flag': ['LARGE', 'SMALL', 'LARGE']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         assert results['statistics']['matched'] == 3
 
     def test_conditional_mapping_in_list(self):
@@ -724,22 +935,22 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'client_code': ['PREM001', 'REGULAR', 'VIP123'],
             'client_treatment': ['STANDARD', 'NORMAL', 'NORMAL']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'client_code': ['PREM001', 'REGULAR', 'VIP123'],
             'client_treatment': ['PRIORITY', 'NORMAL', 'ENHANCED']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         assert results['statistics']['matched'] == 3
 
     def test_conditional_mapping_is_null(self):
@@ -761,22 +972,22 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'override_settlement': [None, 'T+1', None],
             'settlement_date': ['', 'T+1', 'NULL']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'override_settlement': [None, 'T+1', None],
             'settlement_date': ['T+2', 'T+1', 'T+2']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         assert results['statistics']['matched'] == 3
 
     def test_conditional_mapping_regex_match(self):
@@ -799,20 +1010,20 @@ class TestReconciliationEngine:
                 ]
             }
         }
-        
+
         source_data = pd.DataFrame({
             'id': [1, 2, 3],
             'account_number': ['123456AB', '789XYZ', '999888CD'],
             'account_type': ['UNKNOWN', 'GENERIC', 'UNKNOWN']
         })
-        
+
         target_data = pd.DataFrame({
             'id': [1, 2, 3],
             'account_number': ['123456AB', '789XYZ', '999888CD'],
             'account_type': ['INSTITUTIONAL', 'GENERIC', 'INSTITUTIONAL']
         })
-        
+
         engine = ReconciliationEngine(config)
         results = engine.reconcile(source_data, target_data)
-        
+
         assert results['statistics']['matched'] == 3

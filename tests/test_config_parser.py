@@ -33,6 +33,7 @@ class TestConfigParser:
         assert 'fields' in config['reconciliation']
         assert len(config['reconciliation']['keys']) > 0
         assert len(config['reconciliation']['fields']) > 0
+
     
     def test_parse_nonexistent_file(self):
         """Test parsing non-existent configuration file."""

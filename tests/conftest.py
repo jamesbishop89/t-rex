@@ -2,11 +2,12 @@
 Test configuration and fixtures for T-Rex unit tests.
 """
 
-import pytest
-import pandas as pd
-import tempfile
-import os
+import shutil
 from pathlib import Path
+from uuid import uuid4
+
+import pandas as pd
+import pytest
 
 
 @pytest.fixture
@@ -58,8 +59,14 @@ def sample_target_data():
 @pytest.fixture
 def temp_dir():
     """Temporary directory for file operations."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        yield Path(tmp_dir)
+    scratch_root = Path(__file__).resolve().parents[1] / ".codex-tmp" / "pytest"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = scratch_root / uuid4().hex
+    tmp_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        yield tmp_dir
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.fixture
