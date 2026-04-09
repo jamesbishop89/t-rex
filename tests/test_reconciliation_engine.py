@@ -325,6 +325,24 @@ class TestReconciliationEngine:
         assert matches.iloc[1] == False  # 1% difference, outside 0.5% tolerance
         assert matches.iloc[2] == True   # Both zero, should match
 
+    def test_compare_with_tolerance_percentage_with_minimum_absolute_tolerance(self, sample_config):
+        """Percentage tolerances can fall back to an absolute floor for near-zero values."""
+        engine = ReconciliationEngine(sample_config)
+
+        source_series = pd.Series([0.0, 0.0, 100.0])
+        target_series = pd.Series([0.000005, 2.0, 101.5])
+
+        matches = engine._compare_with_tolerance(
+            source_series,
+            target_series,
+            "1%",
+            minimum_absolute_tolerance=1.0,
+        )
+
+        assert matches.iloc[0] == True   # Within 1 unit, should match despite denominator issues
+        assert matches.iloc[1] == False  # Outside the 1-unit floor
+        assert matches.iloc[2] == False  # Outside the 1% tolerance and > 1 unit
+
     def test_compare_with_tolerance_nan_values(self, sample_config):
         """Test tolerance comparison with NaN values."""
         engine = ReconciliationEngine(sample_config)

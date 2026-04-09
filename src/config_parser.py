@@ -80,6 +80,10 @@ class ConfigParser(LoggerMixin):
                 And(float, lambda x: x >= 0),  # Positive float for absolute tolerance
                 And(str, self._validate_percentage_tolerance)  # Percentage string like "1%"
             ),
+            SchemaOptional('minimum_absolute_tolerance'): Or(
+                And(int, lambda x: not isinstance(x, bool) and x >= 0),
+                And(float, lambda x: x >= 0),
+            ),
             SchemaOptional('ignore'): bool,  # Optional flag to ignore field in comparison
             SchemaOptional('hidden'): bool,  # Optional flag to hide field from Excel output
             SchemaOptional('force_zero_when_settled'): bool,  # Force source MTM to 0 when settlement date = reporting date and target MTM is 0

@@ -478,6 +478,43 @@ class ExcelGenerator(LoggerMixin):
         # Apply formatting
         self._apply_sheet_formatting(ws, display_df)
 
+    def _calculate_diff_percent(
+        self,
+        source_numeric: pd.Series,
+        target_numeric: pd.Series,
+        minimum_absolute_tolerance: float | None = None,
+    ) -> pd.Series:
+        """
+        Calculate signed percentage difference for report display.
+
+        Uses the target magnitude as the denominator by default, but falls back to
+        the source magnitude when the target is zero so non-zero/zero comparisons
+        display as +/-100% instead of blank.
+        """
+        abs_diff = (source_numeric - target_numeric).abs()
+        within_absolute_floor = pd.Series(False, index=source_numeric.index, dtype=bool)
+        if minimum_absolute_tolerance is not None:
+            effective_floor = float(minimum_absolute_tolerance) + 1e-9
+            within_absolute_floor = (abs_diff <= effective_floor).fillna(False)
+
+        denominator = pd.Series(
+            np.where(target_numeric.abs() > 0, target_numeric.abs(), source_numeric.abs()),
+            index=source_numeric.index,
+        )
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            diff_values = np.where(
+                within_absolute_floor,
+                0.0,
+                np.where(
+                    denominator > 0,
+                    ((source_numeric - target_numeric) / denominator) * 100,
+                    np.where(source_numeric == target_numeric, 0.0, np.nan),
+                ),
+            )
+
+        return pd.Series(np.round(diff_values, 4), index=source_numeric.index)
+
     def _prepare_comparison_dataframe(self, df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
         """
         Prepare dataframe for comparison display with key columns first.
@@ -533,15 +570,12 @@ class ExcelGenerator(LoggerMixin):
                     source_numeric = pd.to_numeric(df[source_col], errors='coerce')
                     target_numeric = pd.to_numeric(df[target_col], errors='coerce')
                     diff_col = f'diff_pct_{field_name}'
-                    # Calculate diff %: (source - target) / target * 100, handle div-by-zero
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        diff_values = np.where(
-                            target_numeric.abs() > 0,
-                            ((source_numeric - target_numeric) / target_numeric.abs()) * 100,
-                            np.where(source_numeric == target_numeric, 0.0, np.nan)
-                        )
                     df = df.copy() if diff_col not in df.columns else df
-                    df[diff_col] = np.round(diff_values, 4)
+                    df[diff_col] = self._calculate_diff_percent(
+                        source_numeric,
+                        target_numeric,
+                        field.get('minimum_absolute_tolerance'),
+                    )
                     display_columns.append(diff_col)
                     diff_pct_fields.append(field_name)
 

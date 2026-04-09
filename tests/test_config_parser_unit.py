@@ -52,6 +52,27 @@ class TestConfigParserUnit:
         assert fields[0]['tolerance'] == 1
         assert fields[1]['conditional_mapping']['condition_value'] == 0
 
+    def test_schema_accepts_minimum_absolute_tolerance(self):
+        """Percentage tolerances can be paired with an absolute floor."""
+        parser = ConfigParser()
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'mtm',
+                        'tolerance': '1%',
+                        'minimum_absolute_tolerance': 1.0,
+                    }
+                ]
+            }
+        }
+
+        validated = parser.config_schema.validate(config)
+        normalized = normalize_runtime_config(validated)
+
+        assert normalized['reconciliation']['fields'][0]['minimum_absolute_tolerance'] == 1.0
+
     def test_validate_conditional_mappings_allows_false_condition_value(self):
         """Boolean false is a valid condition operand and should not be treated as missing."""
         parser = ConfigParser()

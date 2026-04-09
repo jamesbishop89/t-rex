@@ -1029,12 +1029,14 @@ class ReconciliationEngine(LoggerMixin):
 
             # Compare field with tolerance if specified
             tolerance_config = field_config.get('tolerance')
+            minimum_absolute_tolerance = field_config.get('minimum_absolute_tolerance')
             comparison_result = self._compare_field_values(
                 merged_df[source_col],
                 merged_df[target_col],
                 tolerance_config,
                 field_name,
-                both_records_mask
+                both_records_mask,
+                minimum_absolute_tolerance,
             )
 
             comparison_results[field_name] = comparison_result
@@ -1049,7 +1051,8 @@ class ReconciliationEngine(LoggerMixin):
     def _compare_field_values(self, source_series: pd.Series, target_series: pd.Series,
                             tolerance_config: Optional[Union[float, str]],
                             field_name: str,
-                            scope_mask: Optional[pd.Series] = None) -> Dict[str, Any]:
+                            scope_mask: Optional[pd.Series] = None,
+                            minimum_absolute_tolerance: Optional[float] = None) -> Dict[str, Any]:
         """
         Compare two series of values with optional tolerance.
 
@@ -1068,7 +1071,12 @@ class ReconciliationEngine(LoggerMixin):
             matches = (source_series == target_series) | (source_series.isna() & target_series.isna())
         else:
             # Tolerance-based comparison
-            matches = self._compare_with_tolerance(source_series, target_series, tolerance_config)
+            matches = self._compare_with_tolerance(
+                source_series,
+                target_series,
+                tolerance_config,
+                minimum_absolute_tolerance,
+            )
 
         if scope_mask is None:
             scope_mask = pd.Series(True, index=source_series.index, dtype=bool)
@@ -1092,7 +1100,8 @@ class ReconciliationEngine(LoggerMixin):
         }
 
     def _compare_with_tolerance(self, source_series: pd.Series, target_series: pd.Series,
-                              tolerance_config: Union[float, str]) -> pd.Series:
+                              tolerance_config: Union[float, str],
+                              minimum_absolute_tolerance: Optional[float] = None) -> pd.Series:
         """
         Compare two numeric series with tolerance.
 
@@ -1108,12 +1117,16 @@ class ReconciliationEngine(LoggerMixin):
             # Convert to numeric if possible
             source_numeric = pd.to_numeric(source_series, errors='coerce')
             target_numeric = pd.to_numeric(target_series, errors='coerce')
+            abs_diff = np.abs(source_numeric - target_numeric)
+
+            absolute_floor_matches = pd.Series(False, index=source_series.index, dtype=bool)
+            if minimum_absolute_tolerance is not None:
+                effective_floor = float(minimum_absolute_tolerance) + 1e-9
+                absolute_floor_matches = (abs_diff <= effective_floor).fillna(False)
 
             if isinstance(tolerance_config, str) and tolerance_config.endswith('%'):
                 # Percentage tolerance
                 percentage = float(tolerance_config[:-1]) / 100.0
-                # Handle zero division by using absolute tolerance for zero values
-                abs_diff = np.abs(source_numeric - target_numeric)
                 abs_source = np.abs(source_numeric)
 
                 # For zero source values, use absolute difference comparison
@@ -1139,6 +1152,9 @@ class ReconciliationEngine(LoggerMixin):
                 effective_tolerance = tolerance_value + 1e-9
                 matches = np.isclose(source_numeric, target_numeric, atol=effective_tolerance, rtol=0)
                 matches = pd.Series(matches, index=source_series.index, dtype=bool)
+
+            if minimum_absolute_tolerance is not None:
+                matches = matches | absolute_floor_matches
 
             # Handle NaN comparisons
             both_nan = source_numeric.isna() & target_numeric.isna()

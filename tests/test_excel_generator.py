@@ -256,6 +256,65 @@ class TestExcelGenerator:
         display_df = generator._prepare_comparison_dataframe(df, config)
         assert display_df.empty
 
+    def test_prepare_comparison_dataframe_diff_percent_uses_source_when_target_is_zero(self):
+        """Diff % should not be blank when target is zero and source is non-zero."""
+        generator = ExcelGenerator()
+
+        df = pd.DataFrame({
+            'id': [1, 2, 3, 4],
+            'source_MTM': [-25525.18, 0.0, 0.0, None],
+            'target_MTM': [0.0, 0.0, 100.0, 0.0],
+        })
+
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'MTM',
+                        'diff_amount': True,
+                        'diff_percent': True,
+                    }
+                ]
+            }
+        }
+
+        display_df = generator._prepare_comparison_dataframe(df, config)
+
+        assert display_df['Diff Amount: MTM'].tolist()[:3] == [-25525.18, 0.0, -100.0]
+        assert display_df['Diff %: MTM'].iloc[0] == -100.0
+        assert display_df['Diff %: MTM'].iloc[1] == 0.0
+        assert display_df['Diff %: MTM'].iloc[2] == -100.0
+        assert pd.isna(display_df['Diff %: MTM'].iloc[3])
+
+    def test_prepare_comparison_dataframe_diff_percent_respects_minimum_absolute_tolerance(self):
+        """Tiny near-zero differences should display 0% when inside the absolute floor."""
+        generator = ExcelGenerator()
+
+        df = pd.DataFrame({
+            'id': [1, 2],
+            'source_MTM': [0.0, 0.0],
+            'target_MTM': [0.000005, 2.0],
+        })
+
+        config = {
+            'reconciliation': {
+                'keys': ['id'],
+                'fields': [
+                    {
+                        'name': 'MTM',
+                        'diff_percent': True,
+                        'minimum_absolute_tolerance': 1.0,
+                    }
+                ]
+            }
+        }
+
+        display_df = generator._prepare_comparison_dataframe(df, config)
+
+        assert display_df['Diff %: MTM'].iloc[0] == 0.0
+        assert display_df['Diff %: MTM'].iloc[1] == -100.0
+
     def test_write_dataframe_to_sheet(self):
         """Test writing DataFrame to Excel sheet."""
         generator = ExcelGenerator()
