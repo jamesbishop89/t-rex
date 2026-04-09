@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from src.market_data_automation import (
     AutomationState,
+    build_reconciliation_email_message,
     EmailSettings,
     MarketDataAutomationService,
     MarketDataJobSpec,
@@ -283,6 +284,45 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
             "target": "md_ratecurve_rep_eod_20260327_204536.csv",
         }
     ]
+
+
+def test_build_reconciliation_email_message_includes_html_body(temp_dir):
+    """Result emails should include an HTML alternative alongside plain text."""
+    attachment_path = temp_dir / "rtsh_20260327_204536.xlsx"
+    attachment_path.write_text("xlsx", encoding="utf-8")
+
+    job = MarketDataJobSpec(
+        name="rtsh",
+        config_path=Path("config/market-data/rtsh-rec.yaml"),
+        output_stem="rtsh",
+        source_globs=("rtsh/ProcessedFiles/RTSH_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("md_ratecurve_rep_eod_*.csv",),
+    )
+    source = SimpleNamespace(path=Path("/data/source/RTSH_MUREX_EOD-DATA_TODAY_1.csv"))
+    target = SimpleNamespace(path=Path("/data/target/md_ratecurve_rep_eod_20260327_204536.csv"))
+    settings = EmailSettings(
+        recipients=("ops@example.com",),
+        sender="trex@example.com",
+        smtp_host="smtp.example.com",
+        smtp_port=25,
+    )
+
+    message = build_reconciliation_email_message(
+        email_settings=settings,
+        attachment_path=attachment_path,
+        job=job,
+        source=source,
+        target=target,
+    )
+
+    html_parts = [part for part in message.walk() if part.get_content_type() == "text/html"]
+    attachment_parts = [part for part in message.walk() if part.get_filename() == attachment_path.name]
+
+    assert message["Subject"] == "T-Rex market data reconciliation: rtsh"
+    assert html_parts
+    assert "Market Data Reconciliation Complete" in html_parts[0].get_content()
+    assert "RTSH_MUREX_EOD-DATA_TODAY_1.csv" in html_parts[0].get_content()
+    assert attachment_parts
 
 
 def test_market_data_automation_service_sends_stuck_alert_once(temp_dir, monkeypatch):

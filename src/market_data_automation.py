@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 import fnmatch
+from html import escape
 import json
 import logging
 import os
@@ -36,6 +37,57 @@ DEFAULT_EMAIL_BODY = (
     "Output: {output_path}\n"
     "Config: {config_path}\n"
 )
+DEFAULT_EMAIL_HTML_BODY = """\
+<html>
+  <body style="margin:0;padding:24px;background:#f4f7fb;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">
+    <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:12px;overflow:hidden;">
+      <div style="padding:20px 24px;background:#0f172a;color:#ffffff;">
+        <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.8;">T-Rex</div>
+        <div style="font-size:22px;font-weight:700;margin-top:6px;">Market Data Reconciliation Complete</div>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">
+          The reconciliation workbook has been generated successfully.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;width:170px;font-weight:600;">Job</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;">{job_name}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Source File</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{source_name}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Target File</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{target_name}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Workbook</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{output_name}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Source Path</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{source_path}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Target Path</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{target_path}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Output Path</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{output_path}</code></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Config Path</td>
+            <td style="padding:10px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;"><code>{config_path}</code></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>
+"""
 DEFAULT_STUCK_EMAIL_SUBJECT = "T-Rex market data reconciliation stuck: {job_name}"
 DEFAULT_STUCK_EMAIL_BODY = (
     "Market data reconciliation is waiting for a target file longer than allowed.\n\n"
@@ -101,6 +153,7 @@ class EmailSettings:
     use_ssl: bool = False
     subject_template: str = DEFAULT_EMAIL_SUBJECT
     body_template: str = DEFAULT_EMAIL_BODY
+    html_body_template: str = DEFAULT_EMAIL_HTML_BODY
 
     @property
     def enabled(self) -> bool:
@@ -234,6 +287,11 @@ def parse_args() -> argparse.Namespace:
         "--email-body",
         default=DEFAULT_EMAIL_BODY,
         help="Email body template.",
+    )
+    parser.add_argument(
+        "--email-html-body",
+        default=DEFAULT_EMAIL_HTML_BODY,
+        help="HTML email body template.",
     )
     return parser.parse_args()
 
@@ -520,17 +578,18 @@ def build_email_settings(args: argparse.Namespace) -> Optional[EmailSettings]:
         use_ssl=args.smtp_ssl,
         subject_template=args.email_subject,
         body_template=args.email_body,
+        html_body_template=args.email_html_body,
     )
 
 
-def send_email(
+def build_reconciliation_email_message(
     email_settings: EmailSettings,
     attachment_path: Path,
     job: MarketDataJobSpec,
     source: FileCandidate,
     target: FileCandidate,
-) -> None:
-    """Send the generated reconciliation workbook."""
+) -> EmailMessage:
+    """Build the reconciliation result email with plain-text and HTML bodies."""
     message = EmailMessage()
     format_kwargs = {
         "job_name": job.name,
@@ -542,10 +601,18 @@ def send_email(
         "output_path": str(attachment_path),
         "config_path": str(job.config_path),
     }
+    html_format_kwargs = {
+        key: escape(value) if isinstance(value, str) else value
+        for key, value in format_kwargs.items()
+    }
     message["Subject"] = email_settings.subject_template.format(**format_kwargs)
     message["From"] = email_settings.sender
     message["To"] = ", ".join(email_settings.recipients)
     message.set_content(email_settings.body_template.format(**format_kwargs))
+    message.add_alternative(
+        email_settings.html_body_template.format(**html_format_kwargs),
+        subtype="html",
+    )
 
     with open(attachment_path, "rb") as workbook:
         message.add_attachment(
@@ -554,6 +621,24 @@ def send_email(
             subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename=attachment_path.name,
         )
+    return message
+
+
+def send_email(
+    email_settings: EmailSettings,
+    attachment_path: Path,
+    job: MarketDataJobSpec,
+    source: FileCandidate,
+    target: FileCandidate,
+) -> None:
+    """Send the generated reconciliation workbook."""
+    message = build_reconciliation_email_message(
+        email_settings=email_settings,
+        attachment_path=attachment_path,
+        job=job,
+        source=source,
+        target=target,
+    )
 
     smtp_factory = smtplib.SMTP_SSL if email_settings.use_ssl else smtplib.SMTP
     with smtp_factory(email_settings.smtp_host, email_settings.smtp_port, timeout=30) as client:
