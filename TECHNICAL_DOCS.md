@@ -17,6 +17,12 @@ src.cli (packaged CLI)
         -> reconciliation_conditions
      -> ExcelGenerator
 
+src.market_data_automation
+  -> YAML job map (config/market-data/automation.yaml)
+  -> latest stable source/target file discovery
+  -> ReconciliationRunner
+  -> optional SMTP email delivery
+
 t-rex.py -> thin compatibility wrapper around src.cli.main()
 ```
 
@@ -103,6 +109,17 @@ t-rex.py -> thin compatibility wrapper around src.cli.main()
   - Configurable log levels
   - Structured formatting helpers
 
+### 8. market_data_automation
+- Purpose: Operational polling layer for market-data reconciliations
+- Key responsibilities:
+  - Load YAML job specs for source and target file patterns
+  - Support job groups such as `intraday` and `eod` for separate schedules
+  - Identify the latest stable file versions in busy directories
+  - Pair a new target extract with the newest compatible source extract
+  - Avoid duplicate processing through a persisted JSON state file
+  - Run `ReconciliationRunner` with deterministic output paths
+  - Optionally email the generated workbook through SMTP
+
 ## Data Flow
 
 1. `src.cli` parses arguments and initializes logging.
@@ -112,6 +129,7 @@ t-rex.py -> thin compatibility wrapper around src.cli.main()
 5. `ReconciliationEngine` applies preprocessing, merges datasets, and compares fields.
 6. `ExcelGenerator` writes the workbook and transformation comments.
 7. `ReconciliationRunner` returns statistics and execution metadata.
+8. `market_data_automation` can poll for fresh files, trigger a run, and deliver the workbook.
 
 ## Error Handling Strategy
 
@@ -160,6 +178,7 @@ t-rex.py -> thin compatibility wrapper around src.cli.main()
 - Reconciliation logic and condition evaluation
 - Excel generation and logging
 - Runner orchestration and helper utilities
+- Market-data automation, state handling, and file discovery
 - End-to-end integration flows
 
 ### Test Organization
@@ -175,6 +194,7 @@ tests/
 |-- test_generate_all_recs.py
 |-- test_integration.py
 |-- test_logger_setup.py
+|-- test_market_data_automation.py
 |-- test_merge_files.py
 |-- test_reconciliation_engine.py
 |-- test_reconciliation_runner.py
@@ -285,6 +305,22 @@ Null checks:
 - Python 3.8+
 - Dependencies from `requirements.txt`
 - Sufficient memory for the dataset size
+
+### Ubuntu VM Recommendation
+- Run `src.market_data_automation` in `--once` mode from a `systemd` timer
+  instead of keeping a long-lived shell session open
+- Point `--source-dir`, `--target-dir`, and `--output-dir` at absolute paths on
+  the VM
+- Point `--source-dir` at the common market-data root and let the YAML
+  `source_globs` target the per-job `ProcessedFiles` directories
+- Split scheduling by `--job-groups intraday` and `--job-groups eod` rather
+  than trying to make one timer fit both cadences
+- Increase `--min-file-age-seconds` if files arrive over a network mount or are
+  copied slowly, so partially written files are ignored
+- Keep the state file on the VM filesystem so duplicate-protection survives
+  process restarts
+- Use environment variables or an env file for SMTP credentials rather than
+  hardcoding them into the service command
 
 ### Monitoring
 - Comprehensive logging for audit trails

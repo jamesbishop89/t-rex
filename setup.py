@@ -49,6 +49,7 @@ setup(
     entry_points={
         "console_scripts": [
             "t-rex=src.cli:main",
+            "t-rex-market-data=src.market_data_automation:main",
         ],
     },
     include_package_data=True,

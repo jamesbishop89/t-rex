@@ -44,6 +44,57 @@ python t-rex.py --source source.csv --target target.csv --config config.yaml
 t-rex --source source.csv --target target.csv --config config.yaml --output output.xlsx
 ```
 
+### Market Data Automation
+
+Use the dedicated market-data automation entrypoint to poll the source and
+target folders, wait for files to become stable, pick the newest matching pair,
+run the reconciliation, and optionally email the workbook.
+
+```bash
+t-rex-market-data \
+  --automation-config config/market-data/automation.yaml \
+  --source-dir /prod/Murex/outgoing/prod/interfaces/marketdata \
+  --target-dir target/dr2/market-data \
+  --output-dir output/dr2/market-data \
+  --job-groups intraday \
+  --once
+```
+
+Recommended production pattern on Ubuntu: schedule
+`t-rex-market-data --once` every 1-5 minutes with `systemd` or `cron`. That
+gives you idempotent retries after restarts and uses the JSON state file in the
+output folder to avoid processing the same target extract twice.
+
+The automation config is designed so `--source-dir` points at the common
+market-data root, while each job's `source_globs` descend into the relevant
+`<job>/ProcessedFiles` or `<job>_eod/ProcessedFiles` directory.
+
+Best production split:
+- Run `--job-groups intraday` every few minutes.
+- Run `--job-groups eod` once per day after the EOD target extracts are expected.
+
+Example repo checkout command:
+
+```bash
+python -m src.market_data_automation \
+  --automation-config config/market-data/automation.yaml \
+  --source-dir /prod/Murex/outgoing/prod/interfaces/marketdata \
+  --target-dir /data/target/market-data \
+  --output-dir /data/output/market-data \
+  --job-groups intraday \
+  --min-file-age-seconds 60 \
+  --once
+```
+
+Ubuntu deployment templates are included in:
+- `examples/market-data-automation.service`
+- `examples/market-data-automation.timer`
+- `examples/market-data-automation.env`
+
+Optional SMTP delivery can be configured with `--email-to`, `--email-from`,
+`--smtp-host`, and related flags, or by setting the matching `TREX_*`
+environment variables.
+
 ### YAML Configuration Example
 
 ```yaml

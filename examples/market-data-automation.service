@@ -1,0 +1,13 @@
+[Unit]
+Description=T-Rex market data reconciliation automation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/t-rex
+EnvironmentFile=/etc/t-rex/market-data-automation.env
+ExecStart=/opt/t-rex/.venv/bin/python -m src.market_data_automation --automation-config /opt/t-rex/config/market-data/automation.yaml --source-dir ${TREX_SOURCE_DIR} --target-dir ${TREX_TARGET_DIR} --output-dir ${TREX_OUTPUT_DIR} --state-file ${TREX_STATE_FILE} --min-file-age-seconds ${TREX_MIN_FILE_AGE_SECONDS} --clock-skew-seconds ${TREX_CLOCK_SKEW_SECONDS} --log-level ${TREX_LOG_LEVEL} --once
+
+[Install]
+WantedBy=multi-user.target

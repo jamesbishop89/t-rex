@@ -116,4 +116,9 @@ source/
 target/
 output/
 config/
+!config/
+config/*
+!config/market-data/
+config/market-data/*
+!config/market-data/automation.yaml
 

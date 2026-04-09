@@ -1,0 +1,154 @@
+jobs:
+  - name: cmfp
+    groups: [intraday]
+    config: cmfp-rec.yaml
+    output_stem: cmfp
+    source_globs:
+      - cmfp/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv
+    source_exclude_globs:
+      - "*_new.csv"
+    target_globs:
+      - md_cmfp_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: cmfp_eod
+    groups: [eod]
+    config: cmfp-rec.yaml
+    output_stem: cmfp_eod
+    source_globs:
+      - cmfp_eod/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv
+    source_exclude_globs:
+      - "*_new.csv"
+    target_globs:
+      - md_cmfp_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: cmop_eod
+    groups: [eod]
+    config: cmop-rec.yaml
+    output_stem: cmop_eod
+    source_globs:
+      - cmop_eod/ProcessedFiles/CMOP_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_cmop_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fgfp
+    groups: [intraday]
+    config: fgfp-rec.yaml
+    output_stem: fgfp
+    source_globs:
+      - fgfp/ProcessedFiles/FGFP_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - mx_fg_fgfp_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fgfp_eod
+    groups: [eod]
+    config: fgfp-rec.yaml
+    output_stem: fgfp_eod
+    source_globs:
+      - fgfp_eod/ProcessedFiles/FGFP_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - mx_fg_fgfp_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsm
+    groups: [intraday]
+    config: fxsm-rec.yaml
+    output_stem: fxsm
+    source_globs:
+      - fxsm/ProcessedFiles/FXSM_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsm_eod
+    groups: [eod]
+    config: fxsm-rec.yaml
+    output_stem: fxsm_eod
+    source_globs:
+      - fxsm_eod/ProcessedFiles/FXSM_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsm_mks
+    groups: [intraday]
+    config: fxsm_mks-rec.yaml
+    output_stem: fxsm_mks
+    source_globs:
+      - fxsm/ProcessedFiles/FXSM_MKS_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsm_mks_eod
+    groups: [eod]
+    config: fxsm_mks-rec.yaml
+    output_stem: fxsm_mks_eod
+    source_globs:
+      - fxsm_eod/ProcessedFiles/FXSM_MKS_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsp
+    groups: [intraday]
+    config: fxsp-rec.yaml
+    output_stem: fxsp
+    source_globs:
+      - fxsp/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - fxrate_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxsp_eod
+    groups: [eod]
+    config: fxsp-rec.yaml
+    output_stem: fxsp_eod
+    source_globs:
+      - fxsp_eod/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - fxrate_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxvl
+    groups: [intraday]
+    config: fxvl-rec.yaml
+    output_stem: fxvl
+    source_globs:
+      - fxvl/ProcessedFiles/FXVL_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: fxvl_eod
+    groups: [eod]
+    config: fxvl-rec.yaml
+    output_stem: fxvl_eod
+    source_globs:
+      - fxvl_eod/ProcessedFiles/FXVL_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_fxvol_rep_eod_*.csv
+    max_target_lag_minutes: 30
+
+  - name: rtsh
+    groups: [intraday]
+    config: rtsh-rec.yaml
+    output_stem: rtsh
+    source_globs:
+      - rtsh/ProcessedFiles/RTSH_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_ratecurve_rep_itd_*.csv
+    max_target_lag_minutes: 30
+
+  - name: rtsh_eod
+    groups: [eod]
+    config: rtsh-rec.yaml
+    output_stem: rtsh_eod
+    source_globs:
+      - rtsh_eod/ProcessedFiles/RTSH_MUREX_EOD-DATA_TODAY_*.csv
+    target_globs:
+      - md_ratecurve_rep_eod_*.csv
+    max_target_lag_minutes: 30
