@@ -1,7 +1,52 @@
+schedule_defaults:
+  weekdays_only: &weekdays_only true
+  hourly_05: &hourly_05
+    - "00:05"
+    - "01:05"
+    - "02:05"
+    - "03:05"
+    - "04:05"
+    - "05:05"
+    - "06:05"
+    - "07:05"
+    - "08:05"
+    - "09:05"
+    - "10:05"
+    - "11:05"
+    - "12:05"
+    - "13:05"
+    - "14:05"
+    - "15:05"
+    - "16:05"
+    - "17:05"
+    - "18:05"
+    - "19:05"
+    - "20:05"
+    - "21:05"
+    - "22:05"
+    - "23:05"
+  rtsh_intraday: &rtsh_intraday
+    - "04:23"
+    - "08:23"
+    - "11:23"
+    - "14:23"
+    - "17:23"
+    - "20:00"
+  eod_1950: &eod_1950
+    - "19:50"
+  eod_2050: &eod_2050
+    - "20:50"
+  eod_2055: &eod_2055
+    - "20:55"
+  eod_2155: &eod_2155
+    - "21:55"
+
 jobs:
   - name: cmfp
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *hourly_05
     config: cmfp-rec.yaml
     output_stem: cmfp
     source_globs:
@@ -15,6 +60,8 @@ jobs:
   - name: cmfp_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_2055
     config: cmfp-rec.yaml
     output_stem: cmfp_eod
     source_globs:
@@ -28,6 +75,8 @@ jobs:
   - name: cmop_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_2155
     config: cmop-rec.yaml
     output_stem: cmop_eod
     source_globs:
@@ -39,6 +88,8 @@ jobs:
   - name: fgfp_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_2050
     config: fgfp-rec.yaml
     output_stem: fgfp_eod
     source_globs:
@@ -50,6 +101,8 @@ jobs:
   - name: fxsm
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *hourly_05
     config: fxsm-rec.yaml
     output_stem: fxsm
     source_globs:
@@ -61,6 +114,8 @@ jobs:
   - name: fxsm_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_1950
     config: fxsm-rec.yaml
     output_stem: fxsm_eod
     source_globs:
@@ -72,6 +127,8 @@ jobs:
   - name: fxsm_mks
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *hourly_05
     config: fxsm_mks-rec.yaml
     output_stem: fxsm_mks
     source_globs:
@@ -83,6 +140,8 @@ jobs:
   - name: fxsm_mks_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_1950
     config: fxsm_mks-rec.yaml
     output_stem: fxsm_mks_eod
     source_globs:
@@ -94,6 +153,8 @@ jobs:
   - name: fxsp
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *hourly_05
     config: fxsp-rec.yaml
     output_stem: fxsp
     source_globs:
@@ -105,6 +166,8 @@ jobs:
   - name: fxsp_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_1950
     config: fxsp-rec.yaml
     output_stem: fxsp_eod
     source_globs:
@@ -116,6 +179,8 @@ jobs:
   - name: fxvl
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *hourly_05
     config: fxvl-rec.yaml
     output_stem: fxvl
     source_globs:
@@ -127,6 +192,8 @@ jobs:
   - name: fxvl_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_1950
     config: fxvl-rec.yaml
     output_stem: fxvl_eod
     source_globs:
@@ -138,6 +205,8 @@ jobs:
   - name: rtsh
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: *weekdays_only
+    schedule_times: *rtsh_intraday
     config: rtsh-rec.yaml
     output_stem: rtsh
     source_globs:
@@ -149,6 +218,8 @@ jobs:
   - name: rtsh_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: *weekdays_only
+    schedule_times: *eod_1950
     config: rtsh-rec.yaml
     output_stem: rtsh_eod
     source_globs:

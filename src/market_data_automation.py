@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time as clock_time, timedelta
 from email.message import EmailMessage
 import fnmatch
 from html import escape
@@ -115,6 +115,8 @@ class MarketDataJobSpec:
     max_target_lag: timedelta = timedelta(hours=3)
     delete_output_after_email: bool = False
     retain_output_days: Optional[int] = None
+    schedule_times: tuple[str, ...] = ()
+    weekdays_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -376,6 +378,8 @@ def load_job_specs(
                     if entry.get("retain_output_days") is not None
                     else None
                 ),
+                schedule_times=tuple(str(value).strip() for value in entry.get("schedule_times", []) if str(value).strip()),
+                weekdays_only=bool(entry.get("weekdays_only", False)),
             )
         )
 
@@ -432,6 +436,54 @@ def collect_file_candidates(
     )
 
 
+def parse_schedule_time(value: str) -> clock_time:
+    """Parse a HH:MM schedule string."""
+    return datetime.strptime(value, "%H:%M").time()
+
+
+def latest_schedule_slot(
+    job: MarketDataJobSpec,
+    observed_at: datetime,
+) -> Optional[datetime]:
+    """Return the latest configured schedule slot at or before the observed time."""
+    if not job.schedule_times:
+        return None
+
+    schedule_clocks = sorted(parse_schedule_time(value) for value in job.schedule_times)
+    for day_offset in range(0, 8):
+        day = (observed_at - timedelta(days=day_offset)).date()
+        if job.weekdays_only and day.weekday() >= 5:
+            continue
+        for schedule_clock in reversed(schedule_clocks):
+            slot = datetime.combine(day, schedule_clock)
+            if slot <= observed_at:
+                return slot
+    return None
+
+
+def candidate_belongs_to_schedule_slot(
+    job: MarketDataJobSpec,
+    candidate: FileCandidate,
+    slot: datetime,
+) -> bool:
+    """Return True when a file candidate maps to the specified schedule slot."""
+    candidate_slot = latest_schedule_slot(job, candidate.sort_timestamp)
+    return candidate_slot == slot
+
+
+def filter_candidates_for_schedule_slot(
+    job: MarketDataJobSpec,
+    candidates: Sequence[FileCandidate],
+    slot: datetime,
+) -> List[FileCandidate]:
+    """Filter candidates down to those that belong to the chosen schedule slot."""
+    return [
+        candidate
+        for candidate in candidates
+        if candidate_belongs_to_schedule_slot(job, candidate, slot)
+    ]
+
+
 def select_matching_target(
     targets: Sequence[FileCandidate],
     source: FileCandidate,
@@ -455,9 +507,16 @@ def select_pending_pair(
     targets: Sequence[FileCandidate],
     processed_source_signatures: Set[str],
     clock_skew_seconds: int,
+    prefer_latest_source: bool = False,
 ) -> Optional[tuple[FileCandidate, FileCandidate]]:
     """Choose the next source-triggered source/target pair that should be reconciled."""
-    for source in reversed(sources):
+    source_candidates: Iterable[FileCandidate]
+    if prefer_latest_source:
+        source_candidates = sources
+    else:
+        source_candidates = reversed(sources)
+
+    for source in source_candidates:
         if source.signature in processed_source_signatures:
             continue
         target = select_matching_target(
@@ -501,6 +560,21 @@ class AutomationState:
             if isinstance(item, dict) and "source_signature" in item
         }
 
+    def _slot_value_for(self, job_name: str, key: str) -> Optional[datetime]:
+        """Return a stored schedule slot for the job when present."""
+        raw_value = self._state.get("jobs", {}).get(job_name, {}).get(key)
+        if not raw_value:
+            return None
+        return datetime.fromisoformat(str(raw_value))
+
+    def baseline_schedule_slot_for(self, job_name: str) -> Optional[datetime]:
+        """Return the seeded schedule slot used to ignore pre-existing backlog."""
+        return self._slot_value_for(job_name, "baseline_schedule_slot")
+
+    def processed_schedule_slot_for(self, job_name: str) -> Optional[datetime]:
+        """Return the latest successfully processed schedule slot for the job."""
+        return self._slot_value_for(job_name, "processed_schedule_slot")
+
     def alerted_sources_for(self, job_name: str) -> Set[str]:
         """Return source signatures that already triggered a stuck alert."""
         job_state = self._state.get("jobs", {}).get(job_name, {})
@@ -517,6 +591,7 @@ class AutomationState:
         source: FileCandidate,
         target: FileCandidate,
         output_path: Path,
+        schedule_slot: Optional[datetime] = None,
     ) -> None:
         """Record a successful target delivery."""
         jobs_state = self._state.setdefault("jobs", {})
@@ -534,6 +609,18 @@ class AutomationState:
         )
         if len(processed) > 50:
             del processed[:-50]
+        if schedule_slot is not None:
+            job_state["processed_schedule_slot"] = schedule_slot.isoformat(timespec="minutes")
+
+    def seed_schedule_baseline(
+        self,
+        job_name: str,
+        schedule_slot: datetime,
+    ) -> None:
+        """Record the slot at startup so existing backlog is ignored."""
+        jobs_state = self._state.setdefault("jobs", {})
+        job_state = jobs_state.setdefault(job_name, {})
+        job_state["baseline_schedule_slot"] = schedule_slot.isoformat(timespec="minutes")
 
     def mark_stuck_alerted(
         self,
@@ -830,6 +917,38 @@ class MarketDataAutomationService:
                 observed_at = datetime.now()
                 if not dry_run:
                     self.prune_expired_outputs(job, observed_at=observed_at)
+                schedule_slot: Optional[datetime] = None
+                if job.schedule_times:
+                    schedule_slot = latest_schedule_slot(job, observed_at)
+                    if schedule_slot is None:
+                        self.logger.debug("No schedule slot available for job '%s'", job.name)
+                        continue
+                    baseline_slot = self.state.baseline_schedule_slot_for(job.name)
+                    if baseline_slot is None:
+                        self.state.seed_schedule_baseline(job.name, schedule_slot)
+                        self.state.save()
+                        self.logger.info(
+                            "Seeded schedule baseline for job '%s' at %s; waiting for the next scheduled slot",
+                            job.name,
+                            schedule_slot.strftime("%Y-%m-%d %H:%M"),
+                        )
+                        continue
+                    if schedule_slot <= baseline_slot:
+                        self.logger.debug(
+                            "Job '%s' has not reached a new scheduled slot yet (latest=%s baseline=%s)",
+                            job.name,
+                            schedule_slot.strftime("%Y-%m-%d %H:%M"),
+                            baseline_slot.strftime("%Y-%m-%d %H:%M"),
+                        )
+                        continue
+                    processed_slot = self.state.processed_schedule_slot_for(job.name)
+                    if processed_slot is not None and schedule_slot <= processed_slot:
+                        self.logger.debug(
+                            "Job '%s' already processed scheduled slot %s",
+                            job.name,
+                            schedule_slot.strftime("%Y-%m-%d %H:%M"),
+                        )
+                        continue
                 sources = collect_file_candidates(
                     directory=self.source_dir,
                     include_globs=job.source_globs,
@@ -844,6 +963,9 @@ class MarketDataAutomationService:
                     min_file_age_seconds=self.min_file_age_seconds,
                     now=observed_at,
                 )
+                if schedule_slot is not None:
+                    sources = filter_candidates_for_schedule_slot(job, sources, schedule_slot)
+                    targets = filter_candidates_for_schedule_slot(job, targets, schedule_slot)
                 processed_source_signatures = self.state.processed_sources_for(job.name)
                 alerted_source_signatures = self.state.alerted_sources_for(job.name)
                 overdue_sources = self._find_overdue_sources(
@@ -885,6 +1007,7 @@ class MarketDataAutomationService:
                     targets=targets,
                     processed_source_signatures=processed_source_signatures,
                     clock_skew_seconds=self.clock_skew_seconds,
+                    prefer_latest_source=bool(job.schedule_times),
                 )
                 if pair is None:
                     self.logger.debug("No pending pair for job '%s'", job.name)
@@ -930,7 +1053,13 @@ class MarketDataAutomationService:
                         ", ".join(self.email_settings.recipients),
                     )
 
-                self.state.mark_processed(job.name, source, target, workbook_path)
+                self.state.mark_processed(
+                    job.name,
+                    source,
+                    target,
+                    workbook_path,
+                    schedule_slot=schedule_slot,
+                )
                 self.state.save()
                 if emailed_workbook:
                     self.delete_output_after_successful_email(job, workbook_path)

@@ -13,6 +13,7 @@ from src.market_data_automation import (
     AutomationState,
     build_reconciliation_email_message,
     EmailSettings,
+    latest_schedule_slot,
     MarketDataAutomationService,
     MarketDataJobSpec,
     collect_file_candidates,
@@ -71,12 +72,16 @@ jobs:
   - name: fxsp
     groups: [intraday]
     delete_output_after_email: true
+    weekdays_only: true
+    schedule_times: ["00:05", "01:05"]
     config: fxsp-rec.yaml
     source_globs: [fxsp/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv]
     target_globs: [fxrate_rep_itd_*.csv]
   - name: fxsp_eod
     groups: [eod]
     retain_output_days: 7
+    weekdays_only: true
+    schedule_times: ["19:50"]
     config: fxsp-rec.yaml
     source_globs: [fxsp_eod/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv]
     target_globs: [fxrate_rep_eod_*.csv]
@@ -95,6 +100,24 @@ jobs:
     assert specs[0].groups == ("intraday",)
     assert specs[0].delete_output_after_email is True
     assert specs[0].retain_output_days is None
+    assert specs[0].weekdays_only is True
+    assert specs[0].schedule_times == ("00:05", "01:05")
+
+
+def test_latest_schedule_slot_uses_previous_weekday_for_monday_pre_open():
+    """Weekday-only schedules should roll back to Friday before the first Monday slot."""
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=Path("fxsp-rec.yaml"),
+        output_stem="fxsp",
+        source_globs=("fxsp/ProcessedFiles/*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        schedule_times=("00:05", "01:05"),
+        weekdays_only=True,
+    )
+
+    slot = latest_schedule_slot(job, datetime(2026, 3, 30, 0, 3, 0))
+    assert slot == datetime(2026, 3, 27, 1, 5, 0)
 
 
 def test_select_pending_pair_is_source_triggered():
@@ -288,6 +311,131 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
             "target": "md_ratecurve_rep_eod_20260327_204536.csv",
         }
     ]
+
+
+def test_market_data_automation_service_seeds_schedule_baseline_on_first_run(temp_dir, monkeypatch):
+    """The first scheduled run should ignore existing backlog and wait for the next slot."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    source_file = source_dir / "FXSP_MUREX_EOD-DATA_TODAY_1.csv"
+    target_file = target_dir / "fxrate_rep_itd_20260327_100500.csv"
+    config_file = temp_dir / "fxsp-rec.yaml"
+
+    source_file.write_text("id\n1\n", encoding="utf-8")
+    target_file.write_text("id\n1\n", encoding="utf-8")
+    config_file.write_text("reconciliation:\n  keys: [id]\n  fields:\n    - name: id\n", encoding="utf-8")
+
+    ten_five = datetime(2026, 3, 27, 10, 5, 0).timestamp()
+    os.utime(source_file, (ten_five, ten_five))
+    os.utime(target_file, (ten_five, ten_five))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 3, 27, 10, 10, 0, tzinfo=tz)
+
+    monkeypatch.setattr("src.market_data_automation.datetime", FixedDateTime)
+
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=config_file,
+        output_stem="fxsp",
+        source_globs=("FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        schedule_times=("10:05", "11:05"),
+        weekdays_only=True,
+    )
+    state = AutomationState(temp_dir / ".market_data_state.json")
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=state,
+        min_file_age_seconds=0,
+    )
+
+    summary = service.run_once()
+    assert summary.processed == 0
+    assert summary.failed == 0
+    assert state.baseline_schedule_slot_for("fxsp") == datetime(2026, 3, 27, 10, 5, 0)
+    assert state.processed_schedule_slot_for("fxsp") is None
+
+
+def test_market_data_automation_service_processes_only_latest_scheduled_slot(temp_dir, monkeypatch):
+    """When several slots exist in the folders, only the latest current slot should be processed."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    source_old = source_dir / "FXSP_MUREX_EOD-DATA_TODAY_old.csv"
+    source_new = source_dir / "FXSP_MUREX_EOD-DATA_TODAY_new.csv"
+    target_old = target_dir / "fxrate_rep_itd_20260327_100500.csv"
+    target_new = target_dir / "fxrate_rep_itd_20260327_110500.csv"
+    config_file = temp_dir / "fxsp-rec.yaml"
+
+    for path in (source_old, source_new, target_old, target_new):
+        path.write_text("id\n1\n", encoding="utf-8")
+    config_file.write_text("reconciliation:\n  keys: [id]\n  fields:\n    - name: id\n", encoding="utf-8")
+
+    ten_five = datetime(2026, 3, 27, 10, 5, 0).timestamp()
+    eleven_five = datetime(2026, 3, 27, 11, 5, 0).timestamp()
+    os.utime(source_old, (ten_five, ten_five))
+    os.utime(source_new, (eleven_five, eleven_five))
+    os.utime(target_old, (ten_five, ten_five))
+    os.utime(target_new, (eleven_five, eleven_five))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 3, 27, 11, 10, 0, tzinfo=tz)
+
+    monkeypatch.setattr("src.market_data_automation.datetime", FixedDateTime)
+
+    calls = []
+
+    class FakeRunner:
+        def run(self, request):
+            calls.append(Path(request.output_path).name)
+            output_path = Path(request.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("xlsx", encoding="utf-8")
+            return SimpleNamespace(
+                metadata=SimpleNamespace(output_file=str(output_path))
+            )
+
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=config_file,
+        output_stem="fxsp",
+        source_globs=("FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        schedule_times=("10:05", "11:05"),
+        weekdays_only=True,
+    )
+    state = AutomationState(temp_dir / ".market_data_state.json")
+    state.seed_schedule_baseline("fxsp", datetime(2026, 3, 27, 10, 5, 0))
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=state,
+        runner=FakeRunner(),
+        min_file_age_seconds=0,
+    )
+
+    summary = service.run_once()
+    assert summary.processed == 1
+    assert summary.failed == 0
+    assert calls == ["fxsp_20260327_110500.xlsx"]
+    assert state.processed_schedule_slot_for("fxsp") == datetime(2026, 3, 27, 11, 5, 0)
 
 
 def test_market_data_automation_service_deletes_intraday_output_after_email(temp_dir, monkeypatch):
