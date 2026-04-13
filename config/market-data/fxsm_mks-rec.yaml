@@ -1,0 +1,34 @@
+reconciliation:
+  keys:
+    - name: INSTRUMENT
+      source: pair
+      target: INSTRUMENT
+    - name: MATURITY
+      source: maturity
+      target: MATURITY
+    - name:  DELTA
+      source: ordinate
+      target: STRIKE_RR 
+  fields:
+    - name: ABSOLUTE_BID
+      source: absoluteAsk
+      target: ABSOLUTE_BID
+    - name: ABSOLUTE_ASK
+      source: absoluteAsk
+      target: ABSOLUTE_ASK
+  filters:
+    target:
+      - field: INSTRUMENT
+        condition: in
+        values: 
+          - AUC/USD
+          - AGC/USD
+      - field: STRIKE_RR
+        condition: in
+        values: 
+          - 10
+          - 25
+          - 75
+          - 90
+output:
+  filename: "output/dr2/market-data/fxsm_mks"

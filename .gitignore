@@ -120,5 +120,5 @@ config/
 config/*
 !config/market-data/
 config/market-data/*
-!config/market-data/automation.yaml
+!config/market-data/*.yaml
 

@@ -1,0 +1,44 @@
+reconciliation:
+  keys:
+    - name: CCY_PAIR
+      source: pair
+      target: CCY_PAIR
+  fields:
+    - name: MID
+      source: bid
+      target: BID
+    - name: BUY_SELL
+      source: currency2_amount
+      target: BUY_SELL
+      transformation: "lambda x: 'Buy' if float(x) > 0 else 'Sell'"
+      apply_to: source
+  filters:
+    target:
+      - field: CCY_PAIR
+        condition: in
+        values:
+          - AUD/USD
+          - USD/CAD
+          - GBP/USD
+          - USD/CHF
+          - USD/ZAR
+          - XPD/USD
+          - XPT/USD
+          - XAU/USD
+          - XAG/USD
+          - USD/THB
+          - USD/CNH
+          - USD/SGD
+          - USD/SEK
+          - USD/JPY
+          - USD/HKD
+          - EUR/USD
+          - USD/TRY
+          - AGC/USD
+          - AUC/USD
+          - PDN/USD
+          - PTN/USD
+          - ZPD/USD
+          - ZPT/USD
+output:
+  filename: "output/dr2/market-data/fxsp"

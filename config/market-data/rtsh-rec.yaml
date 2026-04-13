@@ -1,0 +1,50 @@
+reconciliation:
+  keys:
+    - name: GENERATOR
+      source: generator
+      target: GENERATOR
+    - name: MATURITY
+      source: maturity
+      target: MATURITY
+  fields:
+    - name: BID
+      source: bid
+      target: BID
+      tolerance: 0.00001
+    - name: ASK
+      source: ask
+      target: ASK
+      tolerance: 0.00001     
+  filters:
+    target:
+      - field: GENERATOR
+        condition: not_in
+        values: 
+          - USD/SEK   
+      - field: GENERATOR
+        condition: in
+        values:
+          - AUD/USD
+          - EUR/USD
+          - GBP/USD
+          - USD/CAD
+          - USD/CHF
+          - USD/CNH
+          - USD/HKD
+          - USD/JPY
+          - USD/SEK
+          - USD/SGD
+          - USD/THB
+          - USD/TRY
+          - USD/ZAR
+          - ICE SOFR 1M
+          - \USD FIXED SOFR
+          - \USD SOFR A 1Y
+          - XAG CONTANGO
+          - XAU CONTANGO
+          - XPD CONTANGO
+          - XPT CONTANGO
+          - ZPD CONTANGO
+          - ZPT CONTANGO
+output:
+  filename: "output/dr2/market-data/rtsh"

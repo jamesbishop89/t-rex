@@ -1,0 +1,45 @@
+reconciliation:
+  keys:
+    - name: OPTION
+      source: option
+      target: LABEL
+    - name: MATURITY
+      source: maturity
+      target: PILLAR
+    - name: CALL_PUT
+      source: callput
+      target: CALL_PUT
+    - name: STRIKE
+      source: strike
+      target: STRIKE  
+  fields:
+    - name: MID
+      source: mid
+      target: MID
+      tolerance: 0.01
+  filters:
+    target:
+      - field: LABEL
+        condition: in
+        values:
+          - AG CMX OPT
+          - AG CMX WK MON
+          - AG CMX WK TUE
+          - AG CMX WK WED
+          - AG CMX WK THU
+          - AG CMX WK FRI
+          - AU CMX OPT
+          - AU CMX WK MON
+          - AU CMX WK TUE
+          - AU CMX WK WED
+          - AU CMX WK THU
+          - AU CMX WK FRI
+          - PD NMX OPT
+          - PT NMX OPT
+      - field: CALL_PUT
+        condition: in
+        values: 
+          - C
+          - P
+output:
+  filename: "output/dr2/market-data/cmop"

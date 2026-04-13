@@ -1,0 +1,61 @@
+reconciliation:
+  keys:
+    - name: INSTRUMENT
+      source: pair
+      target: INSTRUMENT
+    - name: MATURITY
+      source: maturity
+      target: MATURITY
+    - name:  DELTA
+      source: ordinate
+      target: STRIKE_RR 
+  fields:
+    - name: RR_BID
+      source: fxrrbid
+      target: RR_BID
+      tolerance: 0.01
+    - name: RR_ASK
+      source: fxrrask
+      target: RR_ASK
+      tolerance: 0.01
+    - name: FLY_BID
+      source: fxstrbid
+      target: FLY_BID
+      tolerance: 0.01
+    - name: FLY_ASK
+      source: fxstrask
+      target:  FLY_ASK
+      tolerance: 0.01
+  filters:
+    source:
+      - field: pair
+        condition: not_in
+        values: 
+          - USD/SEK  
+    target:
+      - field: INSTRUMENT
+        condition: in
+        values: 
+          - AUD/USD
+          - EUR/GBP
+          - EUR/USD
+          - GBP/USD
+          - USD/CHF
+          - USD/CNH
+          - USD/JPY
+          - USD/TRY
+          - XAG/USD
+          - XAU/AUD
+          - XAU/CHF
+          - XAU/EUR
+          - XAU/GBP
+          - XAU/USD
+          - XPD/USD
+          - XPT/USD
+      - field: STRIKE_RR
+        condition: in
+        values: 
+        - 10
+        - 25
+output:
+  filename: "output/dr2/market-data/fxsm"

@@ -1,0 +1,26 @@
+reconciliation:
+  keys:
+    - name: FUTURE
+      source: future
+      target: FUTURE
+    - name: MATURITY
+      source: maturity
+      target: ALIAS
+  fields:
+    - name: SETTLEMENT_PRICE
+      source: hisValue
+      target: FIXING_VALUE
+      tolerance: 0.01
+  filters:
+    target:
+      - field: FUTURE
+        condition: in
+        values:
+        - AG CMX
+        - AU CMX
+        - PD NMX
+        - PT NMX
+        - AL CMX
+        - CU CMX
+output:
+  filename: "output/dr2/market-data/fgfp"

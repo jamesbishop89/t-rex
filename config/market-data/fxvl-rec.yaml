@@ -1,0 +1,54 @@
+reconciliation:
+  keys:
+    - name: INSTRUMENT
+      source: pair
+      target: INSTRUMENT
+    - name: MATURITY
+      source: maturity
+      target: MATURITY
+  fields:
+    - name: ATM_BID
+      source: bid
+      target: ATM_BID
+    - name: ATM_ASK
+      source: ask
+      target: ATM_ASK
+  filters:
+    source:
+      - field: pair
+        condition: not_in
+        values: 
+          - USD/SEK  
+    target:
+      - field: INSTRUMENT
+        condition: not_in
+        values: 
+          - USD/SEK    
+      - field: INSTRUMENT
+        condition: in
+        values:
+          - AGC/USD
+          - AUC/USD
+          - AUD/USD
+          - EUR/GBP
+          - EUR/USD
+          - GBP/USD
+          - USD/CHF
+          - USD/CNH
+          - USD/JPY
+          - USD/SEK
+          - USD/TRY
+          - XAG/USD
+          - XAU/AUD
+          - XAU/CHF
+          - XAU/EUR
+          - XAU/GBP
+          - XAU/USD
+          - XPD/USD
+          - XPT/USD
+      - field: STRIKE_RR
+        condition: in
+        values: 
+        - 0       
+output:
+  filename: "output/dr2/market-data/fxvl"
