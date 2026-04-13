@@ -253,7 +253,7 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
 
     sent_messages = []
 
-    def fake_send_email(email_settings, attachment_path, job, source, target):
+    def fake_send_email(email_settings, attachment_path, job, source, target, statistics=None, metadata=None):
         sent_messages.append(
             {
                 "recipients": email_settings.recipients,
@@ -261,6 +261,8 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
                 "job": job.name,
                 "source": source.path.name,
                 "target": target.path.name,
+                "matched": statistics["matched"],
+                "run_timestamp": metadata["recon_date"],
             }
         )
 
@@ -272,7 +274,25 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("xlsx", encoding="utf-8")
             return SimpleNamespace(
-                metadata=SimpleNamespace(output_file=str(output_path))
+                results={
+                    "statistics": {
+                        "total_source": 10,
+                        "total_target": 12,
+                        "matched": 8,
+                        "different": 2,
+                        "missing_in_source": 1,
+                        "missing_in_target": 3,
+                        "match_rate": 0.8,
+                    }
+                },
+                metadata=SimpleNamespace(
+                    output_file=str(output_path),
+                    as_dict=lambda: {
+                        "output_file": str(output_path),
+                        "recon_date": "2026-03-27 20:46:00",
+                        "execution_time": 1.25,
+                    },
+                ),
             )
 
     job = MarketDataJobSpec(
@@ -309,6 +329,8 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
             "job": "rtsh",
             "source": "RTSH_MUREX_EOD-DATA_TODAY_1.csv",
             "target": "md_ratecurve_rep_eod_20260327_204536.csv",
+            "matched": 8,
+            "run_timestamp": "2026-03-27 20:46:00",
         }
     ]
 
@@ -460,7 +482,7 @@ def test_market_data_automation_service_deletes_intraday_output_after_email(temp
 
     sent_messages = []
 
-    def fake_send_email(email_settings, attachment_path, job, source, target):
+    def fake_send_email(email_settings, attachment_path, job, source, target, statistics=None, metadata=None):
         sent_messages.append(attachment_path.name)
 
     monkeypatch.setattr("src.market_data_automation.send_email", fake_send_email)
@@ -471,7 +493,25 @@ def test_market_data_automation_service_deletes_intraday_output_after_email(temp
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("xlsx", encoding="utf-8")
             return SimpleNamespace(
-                metadata=SimpleNamespace(output_file=str(output_path))
+                results={
+                    "statistics": {
+                        "total_source": 1,
+                        "total_target": 1,
+                        "matched": 1,
+                        "different": 0,
+                        "missing_in_source": 0,
+                        "missing_in_target": 0,
+                        "match_rate": 1.0,
+                    }
+                },
+                metadata=SimpleNamespace(
+                    output_file=str(output_path),
+                    as_dict=lambda: {
+                        "output_file": str(output_path),
+                        "recon_date": "2026-03-27 20:46:00",
+                        "execution_time": 0.42,
+                    },
+                ),
             )
 
     deleted_paths = []
@@ -583,15 +623,33 @@ def test_build_reconciliation_email_message_includes_html_body(temp_dir):
         job=job,
         source=source,
         target=target,
+        statistics={
+            "total_source": 120,
+            "total_target": 118,
+            "matched": 112,
+            "different": 8,
+            "missing_in_source": 3,
+            "missing_in_target": 5,
+            "match_rate": 112 / 120,
+        },
+        metadata={
+            "recon_date": "2026-03-27 20:46:00",
+            "execution_time": 1.73,
+        },
     )
 
     html_parts = [part for part in message.walk() if part.get_content_type() == "text/html"]
+    text_parts = [part for part in message.walk() if part.get_content_type() == "text/plain" and part.get_filename() is None]
     attachment_parts = [part for part in message.walk() if part.get_filename() == attachment_path.name]
 
     assert message["Subject"] == "T-Rex market data reconciliation: rtsh"
     assert html_parts
     assert "Market Data Reconciliation Complete" in html_parts[0].get_content()
     assert "RTSH_MUREX_EOD-DATA_TODAY_1.csv" in html_parts[0].get_content()
+    assert "Matched" in html_parts[0].get_content()
+    assert "112" in html_parts[0].get_content()
+    assert text_parts
+    assert "Match Rate: 93.3%" in text_parts[0].get_content()
     assert attachment_parts
 
 

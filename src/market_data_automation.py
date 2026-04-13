@@ -31,61 +31,136 @@ TIMESTAMP_PATTERN = re.compile(r"(?P<stamp>\d{8}_\d{6})")
 DEFAULT_AUTOMATION_CONFIG = "config/market-data/automation.yaml"
 DEFAULT_EMAIL_SUBJECT = "T-Rex market data reconciliation: {job_name}"
 DEFAULT_EMAIL_BODY = (
-    "Market data reconciliation completed.\n\n"
+    "Market data reconciliation completed successfully.\n\n"
     "Job: {job_name}\n"
-    "Source: {source_path}\n"
-    "Target: {target_path}\n"
-    "Output: {output_path}\n"
+    "Run Time: {run_timestamp}\n"
+    "Execution Time: {execution_time}\n"
+    "Compared Records: {comparable_records}\n"
+    "Matched: {matched_records}\n"
+    "Different: {different_records}\n"
+    "Missing in Source: {missing_in_source_records}\n"
+    "Missing in Target: {missing_in_target_records}\n"
+    "Match Rate: {match_rate}\n"
+    "Total Source Records: {total_source_records}\n"
+    "Total Target Records: {total_target_records}\n\n"
+    "Source File: {source_name}\n"
+    "Target File: {target_name}\n"
+    "Workbook: {output_name}\n\n"
+    "Source Path: {source_path}\n"
+    "Target Path: {target_path}\n"
+    "Output Path: {output_path}\n"
     "Config: {config_path}\n"
 )
 DEFAULT_EMAIL_HTML_BODY = """\
 <html>
-  <body style="margin:0;padding:24px;background:#f4f7fb;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">
-    <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:12px;overflow:hidden;">
-      <div style="padding:20px 24px;background:#0f172a;color:#ffffff;">
-        <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.8;">T-Rex</div>
-        <div style="font-size:22px;font-weight:700;margin-top:6px;">Market Data Reconciliation Complete</div>
-      </div>
-      <div style="padding:24px;">
-        <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">
-          The reconciliation workbook has been generated successfully.
-        </p>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;">
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;width:170px;font-weight:600;">Job</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;">{job_name}</td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Source File</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{source_name}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Target File</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{target_name}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;">Workbook</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{output_name}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Source Path</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{source_path}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Target Path</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{target_path}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Output Path</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;"><code>{output_path}</code></td>
-          </tr>
-          <tr>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-weight:600;vertical-align:top;">Config Path</td>
-            <td style="padding:10px 0;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;"><code>{config_path}</code></td>
-          </tr>
-        </table>
-      </div>
-    </div>
+  <body style="margin:0;padding:0;background:#eef3f8;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#eef3f8;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:760px;background:#ffffff;border:1px solid #d9e3ef;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="padding:24px 28px;background:#0f172a;color:#ffffff;">
+                <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.78;">T-Rex</div>
+                <div style="font-size:30px;font-weight:700;line-height:1.15;margin-top:8px;">Market Data Reconciliation Complete</div>
+                <div style="font-size:14px;line-height:1.5;color:#cbd5e1;margin-top:10px;">
+                  Job <strong style="color:#ffffff;">{job_name}</strong>
+                  <span style="padding:0 8px;">|</span>
+                  {run_timestamp}
+                  <span style="padding:0 8px;">|</span>
+                  {execution_time}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px 28px 28px;">
+                <p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:#334155;">
+                  The reconciliation workbook is attached. Key statistics are included below so the result can be reviewed without opening the file.
+                </p>
+
+                <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;margin-bottom:10px;">Reconciliation Statistics</div>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:8px 8px;margin:0 -8px 18px -8px;">
+                  <tr>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Matched</div>
+                      <div style="font-size:28px;font-weight:700;color:#0f766e;margin-top:6px;">{matched_records}</div>
+                    </td>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Different</div>
+                      <div style="font-size:28px;font-weight:700;color:#b45309;margin-top:6px;">{different_records}</div>
+                    </td>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Match Rate</div>
+                      <div style="font-size:28px;font-weight:700;color:#1d4ed8;margin-top:6px;">{match_rate}</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Missing In Source</div>
+                      <div style="font-size:28px;font-weight:700;color:#7c3aed;margin-top:6px;">{missing_in_source_records}</div>
+                    </td>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Missing In Target</div>
+                      <div style="font-size:28px;font-weight:700;color:#dc2626;margin-top:6px;">{missing_in_target_records}</div>
+                    </td>
+                    <td width="33.33%" style="background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;padding:16px;">
+                      <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Compared</div>
+                      <div style="font-size:28px;font-weight:700;color:#0f172a;margin-top:6px;">{comparable_records}</div>
+                    </td>
+                  </tr>
+                </table>
+
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-bottom:22px;background:#f8fafc;border:1px solid #d9e3ef;border-radius:14px;overflow:hidden;">
+                  <tr>
+                    <td style="padding:14px 16px;border-bottom:1px solid #d9e3ef;font-size:13px;font-weight:700;color:#475569;">Total Source Records</td>
+                    <td style="padding:14px 16px;border-bottom:1px solid #d9e3ef;font-size:13px;text-align:right;color:#0f172a;">{total_source_records}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:14px 16px;font-size:13px;font-weight:700;color:#475569;">Total Target Records</td>
+                    <td style="padding:14px 16px;font-size:13px;text-align:right;color:#0f172a;">{total_target_records}</td>
+                  </tr>
+                </table>
+
+                <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;margin-bottom:10px;">Files</div>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-bottom:22px;">
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;">Source File</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:14px;color:#0f172a;">{source_name}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;">Target File</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:14px;color:#0f172a;">{target_name}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;">Workbook</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:14px;color:#0f172a;">{output_name}</td>
+                  </tr>
+                </table>
+
+                <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;margin-bottom:10px;">Details</div>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;vertical-align:top;">Source Path</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;line-height:1.6;color:#334155;font-family:Consolas,'SFMono-Regular',Menlo,monospace;word-break:break-all;">{source_path}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;vertical-align:top;">Target Path</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;line-height:1.6;color:#334155;font-family:Consolas,'SFMono-Regular',Menlo,monospace;word-break:break-all;">{target_path}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;vertical-align:top;">Output Path</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:13px;line-height:1.6;color:#334155;font-family:Consolas,'SFMono-Regular',Menlo,monospace;word-break:break-all;">{output_path}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:150px;padding:10px 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#334155;vertical-align:top;">Config Path</td>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;font-size:13px;line-height:1.6;color:#334155;font-family:Consolas,'SFMono-Regular',Menlo,monospace;word-break:break-all;">{config_path}</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </body>
 </html>
 """
@@ -678,16 +753,50 @@ def build_email_settings(args: argparse.Namespace) -> Optional[EmailSettings]:
     )
 
 
-def build_reconciliation_email_message(
-    email_settings: EmailSettings,
+def format_record_count(value: Any) -> str:
+    """Format reconciliation counts for display in emails."""
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def format_rate(value: Any) -> str:
+    """Format a decimal rate value as a percentage string."""
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "0.0%"
+
+
+def build_reconciliation_email_format_kwargs(
     attachment_path: Path,
     job: MarketDataJobSpec,
     source: FileCandidate,
     target: FileCandidate,
-) -> EmailMessage:
-    """Build the reconciliation result email with plain-text and HTML bodies."""
-    message = EmailMessage()
-    format_kwargs = {
+    statistics: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build formatting values shared by the plain-text and HTML result emails."""
+    stats = statistics or {}
+    run_metadata = metadata or {}
+
+    matched = int(stats.get("matched", 0) or 0)
+    different = int(stats.get("different", 0) or 0)
+    missing_in_source = int(stats.get("missing_in_source", 0) or 0)
+    missing_in_target = int(stats.get("missing_in_target", 0) or 0)
+    comparable = matched + different
+    match_rate_value = stats.get("match_rate")
+    if match_rate_value is None:
+        match_rate_value = (matched / comparable) if comparable else 0
+
+    execution_seconds = run_metadata.get("execution_time", 0)
+    try:
+        execution_time = f"{float(execution_seconds):.2f}s"
+    except (TypeError, ValueError):
+        execution_time = "0.00s"
+
+    return {
         "job_name": job.name,
         "source_name": source.path.name,
         "source_path": str(source.path),
@@ -696,7 +805,38 @@ def build_reconciliation_email_message(
         "output_name": attachment_path.name,
         "output_path": str(attachment_path),
         "config_path": str(job.config_path),
+        "matched_records": format_record_count(matched),
+        "different_records": format_record_count(different),
+        "missing_in_source_records": format_record_count(missing_in_source),
+        "missing_in_target_records": format_record_count(missing_in_target),
+        "total_source_records": format_record_count(stats.get("total_source", 0)),
+        "total_target_records": format_record_count(stats.get("total_target", 0)),
+        "comparable_records": format_record_count(comparable),
+        "match_rate": format_rate(match_rate_value),
+        "run_timestamp": str(run_metadata.get("recon_date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))),
+        "execution_time": execution_time,
     }
+
+
+def build_reconciliation_email_message(
+    email_settings: EmailSettings,
+    attachment_path: Path,
+    job: MarketDataJobSpec,
+    source: FileCandidate,
+    target: FileCandidate,
+    statistics: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> EmailMessage:
+    """Build the reconciliation result email with plain-text and HTML bodies."""
+    message = EmailMessage()
+    format_kwargs = build_reconciliation_email_format_kwargs(
+        attachment_path=attachment_path,
+        job=job,
+        source=source,
+        target=target,
+        statistics=statistics,
+        metadata=metadata,
+    )
     html_format_kwargs = {
         key: escape(value) if isinstance(value, str) else value
         for key, value in format_kwargs.items()
@@ -726,6 +866,8 @@ def send_email(
     job: MarketDataJobSpec,
     source: FileCandidate,
     target: FileCandidate,
+    statistics: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Send the generated reconciliation workbook."""
     message = build_reconciliation_email_message(
@@ -734,6 +876,8 @@ def send_email(
         job=job,
         source=source,
         target=target,
+        statistics=statistics,
+        metadata=metadata,
     )
 
     smtp_factory = smtplib.SMTP_SSL if email_settings.use_ssl else smtplib.SMTP
@@ -1045,6 +1189,8 @@ class MarketDataAutomationService:
                         job=job,
                         source=source,
                         target=target,
+                        statistics=run_result.results.get("statistics"),
+                        metadata=run_result.metadata.as_dict(),
                     )
                     emailed_workbook = True
                     self.logger.info(
