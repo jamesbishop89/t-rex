@@ -47,7 +47,7 @@ jobs:
     delete_output_after_email: true
     weekdays_only: *weekdays_only
     schedule_times: *hourly_05
-    config: cmfp-rec.yaml
+    config: cmfp-intraday-rec.yaml
     output_stem: cmfp
     source_globs:
       - cmfp/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv

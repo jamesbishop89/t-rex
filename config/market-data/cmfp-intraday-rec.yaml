@@ -1,0 +1,30 @@
+reconciliation:
+  keys:
+    - name: GENERATOR
+      source: future
+      target: FUTURE
+    - name: MATURITY
+      source: maturity
+      target: ALIAS
+  fields:
+    - name: BID
+      source: bid
+      target: BID
+      tolerance: 0.001
+    - name: ASK
+      source: ask
+      target: ASK
+      tolerance: 0.001
+  filters:
+    target:
+      - field: FUTURE
+        condition: in
+        values:
+        - AG CMX
+        - AU CMX
+        - PD NMX
+        - PT NMX
+        - AL CMX
+        - CU CMX
+output:
+  filename: "output/dr2/market-data/cmfp"
