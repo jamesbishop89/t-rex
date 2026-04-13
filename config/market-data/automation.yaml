@@ -51,8 +51,6 @@ jobs:
     output_stem: cmfp
     source_globs:
       - cmfp/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv
-    source_exclude_globs:
-      - "*_new.csv"
     target_globs:
       - md_cmfp_rep_itd_*.csv
     max_target_lag_minutes: 30
@@ -66,8 +64,6 @@ jobs:
     output_stem: cmfp_eod
     source_globs:
       - cmfp_eod/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv
-    source_exclude_globs:
-      - "*_new.csv"
     target_globs:
       - md_cmfp_rep_eod_*.csv
     max_target_lag_minutes: 30
