@@ -154,6 +154,42 @@ def test_select_pending_pair_is_source_triggered():
     assert pair == (source, later_target)
 
 
+def test_select_pending_pair_allows_same_slot_target_for_scheduled_jobs():
+    """Scheduled jobs should accept a same-slot target even when its timestamp is slightly earlier."""
+    source = SimpleNamespace(
+        signature="source-1",
+        sort_timestamp=datetime(2026, 3, 27, 17, 8, 11),
+    )
+    same_slot_target = SimpleNamespace(
+        signature="target-same-slot",
+        sort_timestamp=datetime(2026, 3, 27, 17, 7, 23),
+    )
+    previous_slot_target = SimpleNamespace(
+        signature="target-previous-slot",
+        sort_timestamp=datetime(2026, 3, 27, 16, 7, 23),
+    )
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=Path("fxsp-rec.yaml"),
+        output_stem="fxsp",
+        source_globs=("fxsp/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        max_target_lag=timedelta(minutes=30),
+        schedule_times=("17:05",),
+        weekdays_only=True,
+    )
+
+    pair = select_pending_pair(
+        job=job,
+        sources=[source],
+        targets=[same_slot_target, previous_slot_target],
+        processed_source_signatures=set(),
+        clock_skew_seconds=0,
+    )
+
+    assert pair == (source, same_slot_target)
+
+
 def test_market_data_automation_service_marks_processed_targets_and_skips_rerun(temp_dir):
     """A successfully processed source should not be rerun on the next cycle."""
     source_dir = temp_dir / "source"
@@ -458,6 +494,124 @@ def test_market_data_automation_service_processes_only_latest_scheduled_slot(tem
     assert summary.failed == 0
     assert calls == ["fxsp_20260327_110500.xlsx"]
     assert state.processed_schedule_slot_for("fxsp") == datetime(2026, 3, 27, 11, 5, 0)
+
+
+def test_market_data_automation_service_matches_same_slot_target_without_false_stuck_alert(
+    temp_dir, monkeypatch
+):
+    """Scheduled jobs should not raise a stuck alert when source and target belong to the same slot."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    source_file = source_dir / "FXSP_MUREX_EOD-DATA_TODAY_1.csv"
+    target_file = target_dir / "fxrate_rep_itd_20260327_170723.csv"
+    config_file = temp_dir / "fxsp-rec.yaml"
+
+    source_file.write_text("id\n1\n", encoding="utf-8")
+    target_file.write_text("id\n1\n", encoding="utf-8")
+    config_file.write_text("reconciliation:\n  keys: [id]\n  fields:\n    - name: id\n", encoding="utf-8")
+
+    source_ts = datetime(2026, 3, 27, 17, 8, 11).timestamp()
+    target_ts = datetime(2026, 3, 27, 17, 10, 0).timestamp()
+    os.utime(source_file, (source_ts, source_ts))
+    os.utime(target_file, (target_ts, target_ts))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 3, 27, 17, 40, 0, tzinfo=tz)
+
+    monkeypatch.setattr("src.market_data_automation.datetime", FixedDateTime)
+
+    sent_alerts = []
+    sent_emails = []
+
+    def fake_send_stuck_alert_email(email_settings, job, source):
+        sent_alerts.append(source.path.name)
+
+    def fake_send_email(email_settings, attachment_path, job, source, target, statistics=None, metadata=None):
+        sent_emails.append(
+            {
+                "attachment": attachment_path.name,
+                "source": source.path.name,
+                "target": target.path.name,
+            }
+        )
+
+    monkeypatch.setattr("src.market_data_automation.send_stuck_alert_email", fake_send_stuck_alert_email)
+    monkeypatch.setattr("src.market_data_automation.send_email", fake_send_email)
+
+    class FakeRunner:
+        def run(self, request):
+            output_path = Path(request.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("xlsx", encoding="utf-8")
+            return SimpleNamespace(
+                results={
+                    "statistics": {
+                        "total_source": 1,
+                        "total_target": 1,
+                        "matched": 1,
+                        "different": 0,
+                        "missing_in_source": 0,
+                        "missing_in_target": 0,
+                        "match_rate": 1.0,
+                    }
+                },
+                metadata=SimpleNamespace(
+                    output_file=str(output_path),
+                    as_dict=lambda: {
+                        "output_file": str(output_path),
+                        "recon_date": "2026-03-27 17:40:00",
+                        "execution_time": 0.25,
+                    },
+                ),
+            )
+
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=config_file,
+        output_stem="fxsp",
+        source_globs=("FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        max_target_lag=timedelta(minutes=30),
+        schedule_times=("17:05",),
+        weekdays_only=True,
+    )
+    state = AutomationState(temp_dir / ".market_data_state.json")
+    state.seed_schedule_baseline("fxsp", datetime(2026, 3, 27, 16, 5, 0))
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=state,
+        runner=FakeRunner(),
+        email_settings=EmailSettings(
+            recipients=("ops@example.com",),
+            sender="trex@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=25,
+        ),
+        min_file_age_seconds=0,
+        clock_skew_seconds=0,
+    )
+
+    summary = service.run_once()
+    assert summary.processed == 1
+    assert summary.failed == 0
+    assert summary.alerts_sent == 0
+    assert sent_alerts == []
+    assert sent_emails == [
+        {
+            "attachment": "fxsp_20260327_170723.xlsx",
+            "source": "FXSP_MUREX_EOD-DATA_TODAY_1.csv",
+            "target": "fxrate_rep_itd_20260327_170723.csv",
+        }
+    ]
 
 
 def test_market_data_automation_service_deletes_intraday_output_after_email(temp_dir, monkeypatch):

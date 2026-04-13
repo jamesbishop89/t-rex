@@ -559,7 +559,22 @@ def filter_candidates_for_schedule_slot(
     ]
 
 
+def candidates_share_schedule_slot(
+    job: MarketDataJobSpec,
+    source: FileCandidate,
+    target: FileCandidate,
+) -> bool:
+    """Return True when both candidates map to the same configured slot."""
+    if not job.schedule_times:
+        return False
+
+    source_slot = latest_schedule_slot(job, source.sort_timestamp)
+    target_slot = latest_schedule_slot(job, target.sort_timestamp)
+    return source_slot is not None and source_slot == target_slot
+
+
 def select_matching_target(
+    job: MarketDataJobSpec,
     targets: Sequence[FileCandidate],
     source: FileCandidate,
     max_target_lag: timedelta,
@@ -568,9 +583,9 @@ def select_matching_target(
     """Pick the newest target that plausibly belongs with the source."""
     for target in targets:
         lag = target.sort_timestamp - source.sort_timestamp
-        if lag.total_seconds() < -clock_skew_seconds:
-            continue
         if lag > max_target_lag:
+            continue
+        if lag.total_seconds() < -clock_skew_seconds and not candidates_share_schedule_slot(job, source, target):
             continue
         return target
     return None
@@ -584,7 +599,7 @@ def select_pending_pair(
     clock_skew_seconds: int,
     prefer_latest_source: bool = False,
 ) -> Optional[tuple[FileCandidate, FileCandidate]]:
-    """Choose the next source-triggered source/target pair that should be reconciled."""
+    """Choose the next source/target pair that should be reconciled."""
     source_candidates: Iterable[FileCandidate]
     if prefer_latest_source:
         source_candidates = sources
@@ -595,6 +610,7 @@ def select_pending_pair(
         if source.signature in processed_source_signatures:
             continue
         target = select_matching_target(
+            job=job,
             targets=targets,
             source=source,
             max_target_lag=job.max_target_lag,
@@ -1039,6 +1055,7 @@ class MarketDataAutomationService:
             if source.signature in alerted_source_signatures:
                 continue
             if select_matching_target(
+                job=job,
                 targets=targets,
                 source=source,
                 max_target_lag=job.max_target_lag,
