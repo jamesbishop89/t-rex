@@ -559,6 +559,26 @@ def filter_candidates_for_schedule_slot(
     ]
 
 
+def format_debug_timestamp(value: Optional[datetime]) -> str:
+    """Format a timestamp consistently for debug logging."""
+    if value is None:
+        return "none"
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def describe_candidate(job: MarketDataJobSpec, candidate: FileCandidate) -> str:
+    """Return a compact diagnostic string for a file candidate."""
+    slot = latest_schedule_slot(job, candidate.sort_timestamp) if job.schedule_times else None
+    return (
+        f"{candidate.path.name} "
+        f"sort={format_debug_timestamp(candidate.sort_timestamp)} "
+        f"modified={format_debug_timestamp(candidate.modified_timestamp)} "
+        f"slot={format_debug_timestamp(slot)} "
+        f"size={candidate.size_bytes} "
+        f"path={candidate.path}"
+    )
+
+
 def candidates_share_schedule_slot(
     job: MarketDataJobSpec,
     source: FileCandidate,
@@ -960,6 +980,110 @@ class MarketDataAutomationService:
         self.clock_skew_seconds = clock_skew_seconds
         self.logger = logging.getLogger(__name__)
 
+    def _log_candidate_snapshot(
+        self,
+        job: MarketDataJobSpec,
+        label: str,
+        candidates: Sequence[FileCandidate],
+        schedule_slot: Optional[datetime] = None,
+    ) -> None:
+        """Emit a concise snapshot of the candidates considered for a job."""
+        if not self.logger.isEnabledFor(logging.DEBUG):
+            return
+
+        self.logger.debug(
+            "Job '%s' %s candidates: count=%s active_slot=%s",
+            job.name,
+            label,
+            len(candidates),
+            format_debug_timestamp(schedule_slot),
+        )
+        for candidate in candidates[:5]:
+            self.logger.debug(
+                "Job '%s' %s candidate: %s",
+                job.name,
+                label,
+                describe_candidate(job, candidate),
+            )
+        if len(candidates) > 5:
+            self.logger.debug(
+                "Job '%s' %s candidates truncated: %s more",
+                job.name,
+                label,
+                len(candidates) - 5,
+            )
+
+    def _log_no_pending_pair_diagnostics(
+        self,
+        job: MarketDataJobSpec,
+        sources: Sequence[FileCandidate],
+        targets: Sequence[FileCandidate],
+        processed_source_signatures: Set[str],
+    ) -> None:
+        """Explain why a scheduled or on-demand job could not find a pair."""
+        if not self.logger.isEnabledFor(logging.DEBUG):
+            return
+
+        if not sources:
+            self.logger.debug("Job '%s' has no source candidates after filtering", job.name)
+            return
+        if not targets:
+            self.logger.debug("Job '%s' has no target candidates after filtering", job.name)
+            return
+
+        for source in sources[:5]:
+            if source.signature in processed_source_signatures:
+                self.logger.debug(
+                    "Job '%s' source '%s' is already marked processed",
+                    job.name,
+                    source.path.name,
+                )
+                continue
+
+            rejection_reasons: List[str] = []
+            for target in targets:
+                lag = target.sort_timestamp - source.sort_timestamp
+                if lag > job.max_target_lag:
+                    rejection_reasons.append(
+                        f"{target.path.name}: lag {lag} exceeds max {job.max_target_lag}"
+                    )
+                    continue
+                if lag.total_seconds() < -self.clock_skew_seconds and not candidates_share_schedule_slot(
+                    job,
+                    source,
+                    target,
+                ):
+                    source_slot = latest_schedule_slot(job, source.sort_timestamp)
+                    target_slot = latest_schedule_slot(job, target.sort_timestamp)
+                    rejection_reasons.append(
+                        f"{target.path.name}: lag {lag} is earlier than source beyond allowed skew "
+                        f"(source_slot={format_debug_timestamp(source_slot)} "
+                        f"target_slot={format_debug_timestamp(target_slot)})"
+                    )
+                    continue
+
+            if rejection_reasons:
+                for reason in rejection_reasons[:5]:
+                    self.logger.debug(
+                        "Job '%s' source '%s' rejected target: %s",
+                        job.name,
+                        source.path.name,
+                        reason,
+                    )
+                if len(rejection_reasons) > 5:
+                    self.logger.debug(
+                        "Job '%s' source '%s' rejection log truncated: %s more target(s)",
+                        job.name,
+                        source.path.name,
+                        len(rejection_reasons) - 5,
+                    )
+            else:
+                self.logger.debug(
+                    "Job '%s' found no rejection reason for source '%s'; inspect candidate timestamps above",
+                    job.name,
+                    source.path.name,
+                )
+
     def build_output_path(self, job: MarketDataJobSpec, target: FileCandidate) -> Path:
         """Build a deterministic output path for a target file."""
         timestamp = target.sort_timestamp.strftime("%Y%m%d_%H%M%S")
@@ -1124,9 +1248,13 @@ class MarketDataAutomationService:
                     min_file_age_seconds=self.min_file_age_seconds,
                     now=observed_at,
                 )
+                self._log_candidate_snapshot(job, "discovered source", sources)
+                self._log_candidate_snapshot(job, "discovered target", targets)
                 if schedule_slot is not None:
                     sources = filter_candidates_for_schedule_slot(job, sources, schedule_slot)
                     targets = filter_candidates_for_schedule_slot(job, targets, schedule_slot)
+                    self._log_candidate_snapshot(job, "scheduled source", sources, schedule_slot)
+                    self._log_candidate_snapshot(job, "scheduled target", targets, schedule_slot)
                 processed_source_signatures = self.state.processed_sources_for(job.name)
                 alerted_source_signatures = self.state.alerted_sources_for(job.name)
                 overdue_sources = self._find_overdue_sources(
@@ -1172,6 +1300,12 @@ class MarketDataAutomationService:
                 )
                 if pair is None:
                     self.logger.debug("No pending pair for job '%s'", job.name)
+                    self._log_no_pending_pair_diagnostics(
+                        job=job,
+                        sources=sources,
+                        targets=targets,
+                        processed_source_signatures=processed_source_signatures,
+                    )
                     continue
 
                 source, target = pair

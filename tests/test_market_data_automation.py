@@ -5,6 +5,7 @@ Tests for market-data automation helpers and orchestration.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -494,6 +495,68 @@ def test_market_data_automation_service_processes_only_latest_scheduled_slot(tem
     assert summary.failed == 0
     assert calls == ["fxsp_20260327_110500.xlsx"]
     assert state.processed_schedule_slot_for("fxsp") == datetime(2026, 3, 27, 11, 5, 0)
+
+
+def test_market_data_automation_service_logs_schedule_filtered_candidates(
+    temp_dir, monkeypatch, caplog
+):
+    """Debug logs should explain when schedule filtering removes all targets."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    source_file = source_dir / "cmfp_eod" / "ProcessedFiles" / "CMFP_MUREX_EOD-DATA_TODAY_1.csv"
+    target_file = target_dir / "md_cmfp_rep_eod_20260413_200851.csv"
+    config_file = temp_dir / "cmfp-rec.yaml"
+
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text("id\n1\n", encoding="utf-8")
+    target_file.write_text("id\n1\n", encoding="utf-8")
+    config_file.write_text("reconciliation:\n  keys: [id]\n  fields:\n    - name: id\n", encoding="utf-8")
+
+    source_ts = datetime(2026, 4, 13, 20, 57, 0).timestamp()
+    target_ts = datetime(2026, 4, 13, 21, 9, 0).timestamp()
+    os.utime(source_file, (source_ts, source_ts))
+    os.utime(target_file, (target_ts, target_ts))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 4, 13, 21, 19, 39, tzinfo=tz)
+
+    monkeypatch.setattr("src.market_data_automation.datetime", FixedDateTime)
+
+    job = MarketDataJobSpec(
+        name="cmfp_eod",
+        config_path=config_file,
+        output_stem="cmfp_eod",
+        source_globs=("cmfp_eod/ProcessedFiles/CMFP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("md_cmfp_rep_eod_*.csv",),
+        max_target_lag=timedelta(minutes=30),
+        schedule_times=("20:55",),
+        weekdays_only=True,
+    )
+    state = AutomationState(temp_dir / ".market_data_state.json")
+    state.seed_schedule_baseline("cmfp_eod", datetime(2026, 4, 10, 20, 55, 0))
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=state,
+        min_file_age_seconds=0,
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        summary = service.run_once(dry_run=True)
+
+    assert summary.processed == 0
+    assert summary.failed == 0
+    assert "Job 'cmfp_eod' scheduled source candidates: count=1" in caplog.text
+    assert "Job 'cmfp_eod' scheduled target candidates: count=0" in caplog.text
+    assert "Job 'cmfp_eod' has no target candidates after filtering" in caplog.text
 
 
 def test_market_data_automation_service_matches_same_slot_target_without_false_stuck_alert(
