@@ -33,16 +33,6 @@ jobs:
       - md_cmop_rep_eod_*.csv
     max_target_lag_minutes: 30
 
-  - name: fgfp
-    groups: [intraday]
-    config: fgfp-rec.yaml
-    output_stem: fgfp
-    source_globs:
-      - fgfp/ProcessedFiles/FGFP_MUREX_EOD-DATA_TODAY_*.csv
-    target_globs:
-      - mx_fg_fgfp_rep_itd_*.csv
-    max_target_lag_minutes: 30
-
   - name: fgfp_eod
     groups: [eod]
     config: fgfp-rec.yaml
