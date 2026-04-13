@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import smtplib
+import stat
 import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
@@ -112,6 +113,8 @@ class MarketDataJobSpec:
     source_exclude_globs: tuple[str, ...] = ()
     target_exclude_globs: tuple[str, ...] = ()
     max_target_lag: timedelta = timedelta(hours=3)
+    delete_output_after_email: bool = False
+    retain_output_days: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -367,6 +370,12 @@ def load_job_specs(
                 source_exclude_globs=tuple(str(value) for value in entry.get("source_exclude_globs", [])),
                 target_exclude_globs=tuple(str(value) for value in entry.get("target_exclude_globs", [])),
                 max_target_lag=timedelta(minutes=int(entry.get("max_target_lag_minutes", 180))),
+                delete_output_after_email=bool(entry.get("delete_output_after_email", False)),
+                retain_output_days=(
+                    int(entry["retain_output_days"])
+                    if entry.get("retain_output_days") is not None
+                    else None
+                ),
             )
         )
 
@@ -709,6 +718,79 @@ class MarketDataAutomationService:
         timestamp = target.sort_timestamp.strftime("%Y%m%d_%H%M%S")
         return self.output_dir / f"{job.output_stem}_{timestamp}.xlsx"
 
+    def unlink_output_file(self, path: Path) -> None:
+        """Delete an output file, retrying with writable permissions when needed."""
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            os.chmod(path, stat.S_IWRITE)
+            path.unlink()
+
+    def prune_expired_outputs(
+        self,
+        job: MarketDataJobSpec,
+        observed_at: Optional[datetime] = None,
+    ) -> int:
+        """Remove old output workbooks that have exceeded the configured retention."""
+        if job.retain_output_days is None:
+            return 0
+
+        cutoff = (observed_at or datetime.now()) - timedelta(days=job.retain_output_days)
+        deleted_count = 0
+        for path in self.output_dir.glob(f"{job.output_stem}_*.xlsx"):
+            if not path.is_file():
+                continue
+            modified_at = datetime.fromtimestamp(path.stat().st_mtime)
+            if modified_at > cutoff:
+                continue
+            try:
+                self.unlink_output_file(path)
+                deleted_count += 1
+            except OSError:
+                self.logger.warning(
+                    "Unable to delete expired output '%s' for job '%s'",
+                    path,
+                    job.name,
+                    exc_info=True,
+                )
+
+        if deleted_count:
+            self.logger.info(
+                "Deleted %s expired output file(s) for job '%s'",
+                deleted_count,
+                job.name,
+            )
+        return deleted_count
+
+    def delete_output_after_successful_email(
+        self,
+        job: MarketDataJobSpec,
+        workbook_path: Path,
+    ) -> bool:
+        """Delete the generated workbook when the job requests post-email cleanup."""
+        if not job.delete_output_after_email:
+            return False
+        if not workbook_path.exists():
+            return False
+        try:
+            self.unlink_output_file(workbook_path)
+        except OSError:
+            self.logger.warning(
+                "Unable to delete emailed workbook '%s' for job '%s'",
+                workbook_path,
+                job.name,
+                exc_info=True,
+            )
+            return False
+
+        self.logger.info(
+            "Deleted emailed workbook for job '%s': %s",
+            job.name,
+            workbook_path,
+        )
+        return True
+
     def _find_overdue_sources(
         self,
         job: MarketDataJobSpec,
@@ -746,6 +828,8 @@ class MarketDataAutomationService:
         for job in self.job_specs:
             try:
                 observed_at = datetime.now()
+                if not dry_run:
+                    self.prune_expired_outputs(job, observed_at=observed_at)
                 sources = collect_file_candidates(
                     directory=self.source_dir,
                     include_globs=job.source_globs,
@@ -829,6 +913,7 @@ class MarketDataAutomationService:
                     )
                 )
                 workbook_path = Path(run_result.metadata.output_file)
+                emailed_workbook = False
 
                 if self.email_settings is not None and self.email_settings.enabled:
                     send_email(
@@ -838,6 +923,7 @@ class MarketDataAutomationService:
                         source=source,
                         target=target,
                     )
+                    emailed_workbook = True
                     self.logger.info(
                         "Emailed workbook for job '%s' to %s",
                         job.name,
@@ -846,6 +932,8 @@ class MarketDataAutomationService:
 
                 self.state.mark_processed(job.name, source, target, workbook_path)
                 self.state.save()
+                if emailed_workbook:
+                    self.delete_output_after_successful_email(job, workbook_path)
                 processed_count += 1
             except Exception:
                 failed_count += 1

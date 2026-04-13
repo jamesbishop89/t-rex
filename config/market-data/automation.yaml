@@ -1,6 +1,7 @@
 jobs:
   - name: cmfp
     groups: [intraday]
+    delete_output_after_email: true
     config: cmfp-rec.yaml
     output_stem: cmfp
     source_globs:
@@ -13,6 +14,7 @@ jobs:
 
   - name: cmfp_eod
     groups: [eod]
+    retain_output_days: 7
     config: cmfp-rec.yaml
     output_stem: cmfp_eod
     source_globs:
@@ -25,6 +27,7 @@ jobs:
 
   - name: cmop_eod
     groups: [eod]
+    retain_output_days: 7
     config: cmop-rec.yaml
     output_stem: cmop_eod
     source_globs:
@@ -35,6 +38,7 @@ jobs:
 
   - name: fgfp_eod
     groups: [eod]
+    retain_output_days: 7
     config: fgfp-rec.yaml
     output_stem: fgfp_eod
     source_globs:
@@ -45,6 +49,7 @@ jobs:
 
   - name: fxsm
     groups: [intraday]
+    delete_output_after_email: true
     config: fxsm-rec.yaml
     output_stem: fxsm
     source_globs:
@@ -55,6 +60,7 @@ jobs:
 
   - name: fxsm_eod
     groups: [eod]
+    retain_output_days: 7
     config: fxsm-rec.yaml
     output_stem: fxsm_eod
     source_globs:
@@ -65,6 +71,7 @@ jobs:
 
   - name: fxsm_mks
     groups: [intraday]
+    delete_output_after_email: true
     config: fxsm_mks-rec.yaml
     output_stem: fxsm_mks
     source_globs:
@@ -75,6 +82,7 @@ jobs:
 
   - name: fxsm_mks_eod
     groups: [eod]
+    retain_output_days: 7
     config: fxsm_mks-rec.yaml
     output_stem: fxsm_mks_eod
     source_globs:
@@ -85,6 +93,7 @@ jobs:
 
   - name: fxsp
     groups: [intraday]
+    delete_output_after_email: true
     config: fxsp-rec.yaml
     output_stem: fxsp
     source_globs:
@@ -95,6 +104,7 @@ jobs:
 
   - name: fxsp_eod
     groups: [eod]
+    retain_output_days: 7
     config: fxsp-rec.yaml
     output_stem: fxsp_eod
     source_globs:
@@ -105,6 +115,7 @@ jobs:
 
   - name: fxvl
     groups: [intraday]
+    delete_output_after_email: true
     config: fxvl-rec.yaml
     output_stem: fxvl
     source_globs:
@@ -115,6 +126,7 @@ jobs:
 
   - name: fxvl_eod
     groups: [eod]
+    retain_output_days: 7
     config: fxvl-rec.yaml
     output_stem: fxvl_eod
     source_globs:
@@ -125,6 +137,7 @@ jobs:
 
   - name: rtsh
     groups: [intraday]
+    delete_output_after_email: true
     config: rtsh-rec.yaml
     output_stem: rtsh
     source_globs:
@@ -135,6 +148,7 @@ jobs:
 
   - name: rtsh_eod
     groups: [eod]
+    retain_output_days: 7
     config: rtsh-rec.yaml
     output_stem: rtsh_eod
     source_globs:

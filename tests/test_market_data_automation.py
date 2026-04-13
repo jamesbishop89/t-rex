@@ -70,11 +70,13 @@ def test_load_job_specs_filters_by_group(temp_dir):
 jobs:
   - name: fxsp
     groups: [intraday]
+    delete_output_after_email: true
     config: fxsp-rec.yaml
     source_globs: [fxsp/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv]
     target_globs: [fxrate_rep_itd_*.csv]
   - name: fxsp_eod
     groups: [eod]
+    retain_output_days: 7
     config: fxsp-rec.yaml
     source_globs: [fxsp_eod/ProcessedFiles/FXSP_MUREX_EOD-DATA_TODAY_*.csv]
     target_globs: [fxrate_rep_eod_*.csv]
@@ -91,6 +93,8 @@ jobs:
 
     assert [spec.name for spec in specs] == ["fxsp"]
     assert specs[0].groups == ("intraday",)
+    assert specs[0].delete_output_after_email is True
+    assert specs[0].retain_output_days is None
 
 
 def test_select_pending_pair_is_source_triggered():
@@ -284,6 +288,124 @@ def test_market_data_automation_service_sends_email_when_configured(temp_dir, mo
             "target": "md_ratecurve_rep_eod_20260327_204536.csv",
         }
     ]
+
+
+def test_market_data_automation_service_deletes_intraday_output_after_email(temp_dir, monkeypatch):
+    """Intraday outputs should be queued for deletion after a successful email send."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    source_file = source_dir / "FXSP_MUREX_EOD-DATA_TODAY_1.csv"
+    target_file = target_dir / "fxrate_rep_itd_20260327_204536.csv"
+    config_file = temp_dir / "fxsp-rec.yaml"
+
+    source_file.write_text("id\n1\n", encoding="utf-8")
+    target_file.write_text("id\n1\n", encoding="utf-8")
+    config_file.write_text("reconciliation:\n  keys: [id]\n  fields:\n    - name: id\n", encoding="utf-8")
+
+    base_time = datetime(2026, 3, 27, 20, 46, 0).timestamp()
+    os.utime(source_file, (base_time - 60, base_time - 60))
+    os.utime(target_file, (base_time, base_time))
+
+    sent_messages = []
+
+    def fake_send_email(email_settings, attachment_path, job, source, target):
+        sent_messages.append(attachment_path.name)
+
+    monkeypatch.setattr("src.market_data_automation.send_email", fake_send_email)
+
+    class FakeRunner:
+        def run(self, request):
+            output_path = Path(request.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("xlsx", encoding="utf-8")
+            return SimpleNamespace(
+                metadata=SimpleNamespace(output_file=str(output_path))
+            )
+
+    deleted_paths = []
+
+    job = MarketDataJobSpec(
+        name="fxsp",
+        config_path=config_file,
+        output_stem="fxsp",
+        source_globs=("FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_itd_*.csv",),
+        delete_output_after_email=True,
+    )
+
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=AutomationState(temp_dir / ".market_data_state.json"),
+        runner=FakeRunner(),
+        email_settings=EmailSettings(
+            recipients=("ops@example.com",),
+            sender="trex@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=25,
+        ),
+        min_file_age_seconds=0,
+    )
+    monkeypatch.setattr(service, "unlink_output_file", lambda path: deleted_paths.append(path))
+
+    summary = service.run_once()
+    output_path = output_dir / "fxsp_20260327_204536.xlsx"
+    assert summary.processed == 1
+    assert summary.failed == 0
+    assert sent_messages == ["fxsp_20260327_204536.xlsx"]
+    assert deleted_paths == [output_path]
+
+
+def test_market_data_automation_service_prunes_expired_eod_outputs(temp_dir):
+    """EOD outputs older than the retention window should be queued for deletion."""
+    source_dir = temp_dir / "source"
+    target_dir = temp_dir / "target"
+    output_dir = temp_dir / "output"
+    source_dir.mkdir()
+    target_dir.mkdir()
+    output_dir.mkdir()
+
+    old_output = output_dir / "fxsp_eod_20260320_204536.xlsx"
+    fresh_output = output_dir / "fxsp_eod_20260327_204536.xlsx"
+    old_output.write_text("xlsx", encoding="utf-8")
+    fresh_output.write_text("xlsx", encoding="utf-8")
+
+    now_ts = datetime.now().timestamp()
+    eight_days_ago = now_ts - (8 * 24 * 60 * 60)
+    two_days_ago = now_ts - (2 * 24 * 60 * 60)
+    os.utime(old_output, (eight_days_ago, eight_days_ago))
+    os.utime(fresh_output, (two_days_ago, two_days_ago))
+
+    job = MarketDataJobSpec(
+        name="fxsp_eod",
+        config_path=temp_dir / "fxsp-rec.yaml",
+        output_stem="fxsp_eod",
+        source_globs=("FXSP_MUREX_EOD-DATA_TODAY_*.csv",),
+        target_globs=("fxrate_rep_eod_*.csv",),
+        retain_output_days=7,
+    )
+
+    deleted_paths = []
+    service = MarketDataAutomationService(
+        job_specs=[job],
+        source_dir=source_dir,
+        target_dir=target_dir,
+        output_dir=output_dir,
+        state=AutomationState(temp_dir / ".market_data_state.json"),
+        min_file_age_seconds=0,
+    )
+    service.unlink_output_file = lambda path: deleted_paths.append(path)
+
+    summary = service.run_once()
+    assert summary.processed == 0
+    assert summary.failed == 0
+    assert deleted_paths == [old_output]
 
 
 def test_build_reconciliation_email_message_includes_html_body(temp_dir):
